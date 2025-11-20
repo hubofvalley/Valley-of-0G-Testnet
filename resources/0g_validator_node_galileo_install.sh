@@ -107,7 +107,7 @@ cp $HOME/galileo/$NODE_TYPE/bin/0gchaind $HOME/go/bin/0gchaind
 mkdir -p $HOME/.0gchaind/
 cp -r $HOME/galileo/$NODE_TYPE/* $HOME/.0gchaind/
 0g-geth init --datadir $HOME/.0gchaind/0g-home/geth-home $HOME/.0gchaind/geth-genesis.json
-0gchaind init "$MONIKER" --home $HOME/.0gchaind/tmp --chaincfg.chain-spec devnet
+0gchaind init "$MONIKER" --home $HOME/.0gchaind/tmp --chaincfg.chain-spec testnet
 
 # ==== COPY KEYS ====
 cp $HOME/.0gchaind/tmp/data/priv_validator_state.json $HOME/.0gchaind/0g-home/0gchaind-home/data/
@@ -115,7 +115,7 @@ cp $HOME/.0gchaind/tmp/config/node_key.json $HOME/.0gchaind/0g-home/0gchaind-hom
 cp $HOME/.0gchaind/tmp/config/priv_validator_key.json $HOME/.0gchaind/0g-home/0gchaind-home/config/
 
 # ==== Generate JWT Authentication Token ====
-0gchaind jwt generate --home $HOME/.0gchaind/0g-home/0gchaind-home --chaincfg.chain-spec devnet
+0gchaind jwt generate --home $HOME/.0gchaind/0g-home/0gchaind-home --chaincfg.chain-spec testnet
 cp -f $HOME/.0gchaind/0g-home/0gchaind-home/config/jwt.hex $HOME/.0gchaind/jwt.hex
 
 # ==== CONFIG PATCH ====
@@ -166,10 +166,10 @@ After=network-online.target
 
 [Service]
 User=$USER
-Environment=CHAIN_SPEC=devnet
+Environment=CHAIN_SPEC=testnet
 WorkingDirectory=$HOME/.0gchaind
 ExecStart=$HOME/go/bin/0gchaind start \
-  --chaincfg.chain-spec devnet \
+  --chaincfg.chain-spec testnet \
   --chaincfg.restaking.enabled \
   --chaincfg.restaking.symbiotic-rpc-dial-url ${ETH_RPC_URL} \
   --chaincfg.restaking.symbiotic-get-logs-block-range ${BLOCK_NUM} \
@@ -194,10 +194,10 @@ After=network-online.target
 
 [Service]
 User=$USER
-Environment=CHAIN_SPEC=devnet
+Environment=CHAIN_SPEC=testnet
 WorkingDirectory=$HOME/.0gchaind
 ExecStart=$HOME/go/bin/0gchaind start \
-  --chaincfg.chain-spec devnet \
+  --chaincfg.chain-spec testnet \
   --home $HOME/.0gchaind/0g-home/0gchaind-home \
   --chaincfg.kzg.trusted-setup-path=$HOME/.0gchaind/kzg-trusted-setup.json \
   --chaincfg.engine.jwt-secret-path=$HOME/.0gchaind/jwt.hex \
@@ -229,7 +229,7 @@ ExecStart=$HOME/go/bin/0g-geth \
   --ws.port ${OG_PORT}546 \
   --authrpc.port ${OG_PORT}551 \
   --port ${OG_PORT}303 \
-  --networkid 16601
+  --networkid 16602
 Restart=always
 RestartSec=3
 LimitNOFILE=65535
