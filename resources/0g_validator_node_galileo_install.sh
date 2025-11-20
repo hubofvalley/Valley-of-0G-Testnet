@@ -35,10 +35,10 @@ read -p "Do you want to enable the indexer? (yes/no): " ENABLE_INDEXER
 
 # Extra prompts for VALIDATOR
 if [ "$NODE_TYPE" = "validator" ]; then
-  read -p "Enter Holesky ETH RPC endpoint (ETH_RPC_URL): " ETH_RPC_URL
+  read -p "Enter Holesky Testnet ETH RPC endpoint (ETH_RPC_URL): " ETH_RPC_URL
   while [ -z "$ETH_RPC_URL" ]; do
     echo "ETH_RPC_URL cannot be empty for validator mode."
-    read -p "Enter Holesky ETH RPC endpoint (ETH_RPC_URL): " ETH_RPC_URL
+    read -p "Enter Holesky Testnet ETH RPC endpoint (ETH_RPC_URL): " ETH_RPC_URL
   done
   read -p "Enter block range to fetch logs (BLOCK_NUM), e.g. 2000: " BLOCK_NUM
   while ! [[ "$BLOCK_NUM" =~ ^[0-9]+$ ]]; do
@@ -57,8 +57,8 @@ fi
     echo "export BLOCK_NUM=\"$BLOCK_NUM\""
   fi
   echo 'export PATH=$PATH:$HOME/galileo/bin'
-} >> ~/.bash_profile
-source ~/.bash_profile
+  } >> ~/.bash_profile
+  source ~/.bash_profile
 
 # ==== CLEANUP EXISTING INSTALLATION ====
 echo -e "\n?? Cleaning up any existing 0G node installation..."
@@ -89,28 +89,34 @@ go version
 
 # ==== DOWNLOAD GALILEO v3.0.3 ====
 cd $HOME
-rm -rf galileo
-wget -q https://github.com/0gfoundation/0gchain-NG/releases/download/v3.0.3/galileo-v3.0.3.tar.gz
+sudo rm -rf galileo
+wget -q https://github.com/0gfoundation/0gchain-NG/releases/download/v3.0.3/galileo-v3.0.3.tar.gz -O galileo-v3.0.3.tar.gz
 tar -xzvf galileo-v3.0.3.tar.gz
 mv galileo-v3.0.3 galileo
-rm galileo-v3.0.3.tar.gz
-sudo chmod +x $HOME/galileo/bin/geth
-sudo chmod +x $HOME/galileo/bin/0gchaind
+sudo rm galileo-v3.0.3.tar.gz
+
+# ==== MAKE BINARIES EXECUTABLE ====
+sudo chmod +x $HOME/galileo/$NODE_TYPE/bin/geth
+sudo chmod +x $HOME/galileo/$NODE_TYPE/bin/0gchaind
 
 # ==== MOVE BINARIES ====
-cp $HOME/galileo/bin/geth $HOME/go/bin/0g-geth
-cp $HOME/galileo/bin/0gchaind $HOME/go/bin/0gchaind
+cp $HOME/galileo/$NODE_TYPE/bin/geth $HOME/go/bin/0g-geth
+cp $HOME/galileo/$NODE_TYPE/bin/0gchaind $HOME/go/bin/0gchaind
 
 # ==== INIT CHAIN ====
 mkdir -p $HOME/.0gchaind/
-cp -r $HOME/galileo/* $HOME/.0gchaind/
-0g-geth init --datadir $HOME/.0gchaind/0g-home/geth-home $HOME/.0gchaind/genesis.json
-0gchaind init "$MONIKER" --home $HOME/.0gchaind/tmp
+cp -r $HOME/galileo/$NODE_TYPE/* $HOME/.0gchaind/
+0g-geth init --datadir $HOME/.0gchaind/0g-home/geth-home $HOME/.0gchaind/geth-genesis.json
+0gchaind init "$MONIKER" --home $HOME/.0gchaind/tmp --chaincfg.chain-spec devnet
 
 # ==== COPY KEYS ====
 cp $HOME/.0gchaind/tmp/data/priv_validator_state.json $HOME/.0gchaind/0g-home/0gchaind-home/data/
 cp $HOME/.0gchaind/tmp/config/node_key.json $HOME/.0gchaind/0g-home/0gchaind-home/config/
 cp $HOME/.0gchaind/tmp/config/priv_validator_key.json $HOME/.0gchaind/0g-home/0gchaind-home/config/
+
+# ==== Generate JWT Authentication Token ====
+0gchaind jwt generate --home $HOME/.0gchaind/0g-home/0gchaind-home --chaincfg.chain-spec devnet
+cp -f $HOME/.0gchaind/0g-home/0gchaind-home/config/jwt.hex $HOME/.0gchaind/jwt.hex
 
 # ==== CONFIG PATCH ====
 CONFIG="$HOME/.0gchaind/0g-home/0gchaind-home/config"
@@ -146,6 +152,7 @@ sed -i "s/HTTPPort = .*/HTTPPort = ${OG_PORT}545/" $GCONFIG
 sed -i "s/WSPort = .*/WSPort = ${OG_PORT}546/" $GCONFIG
 sed -i "s/AuthPort = .*/AuthPort = ${OG_PORT}551/" $GCONFIG
 sed -i "s/ListenAddr = .*/ListenAddr = \":${OG_PORT}303\"/" $GCONFIG
+sed -i "s/DiscAddr = .*/DiscAddr = \":${OG_PORT}303\"/" $GCONFIG
 sed -i "s/^# *Port = .*/# Port = ${OG_PORT}901/" $GCONFIG
 sed -i "s/^# *InfluxDBEndpoint = .*/# InfluxDBEndpoint = \"http:\/\/localhost:${OG_PORT}086\"/" $GCONFIG
 
@@ -168,10 +175,9 @@ ExecStart=$HOME/go/bin/0gchaind start \
   --chaincfg.restaking.symbiotic-get-logs-block-range ${BLOCK_NUM} \
   --home $HOME/.0gchaind/0g-home/0gchaind-home \
   --chaincfg.kzg.trusted-setup-path=$HOME/.0gchaind/kzg-trusted-setup.json \
-  --chaincfg.engine.jwt-secret-path=$HOME/.0gchaind/jwt-secret.hex \
+  --chaincfg.engine.jwt-secret-path=$HOME/.0gchaind/jwt.hex \
   --chaincfg.kzg.implementation=crate-crypto/go-kzg-4844 \
   --chaincfg.engine.rpc-dial-url=http://localhost:${OG_PORT}551 \
-  --p2p.seeds 85a9b9a1b7fa0969704db2bc37f7c100855a75d9@8.218.88.60:26656 \
   --p2p.external_address=${EXTERNAL_IP}:${OG_PORT}656
 Restart=always
 RestartSec=3
@@ -194,10 +200,9 @@ ExecStart=$HOME/go/bin/0gchaind start \
   --chaincfg.chain-spec devnet \
   --home $HOME/.0gchaind/0g-home/0gchaind-home \
   --chaincfg.kzg.trusted-setup-path=$HOME/.0gchaind/kzg-trusted-setup.json \
-  --chaincfg.engine.jwt-secret-path=$HOME/.0gchaind/jwt-secret.hex \
+  --chaincfg.engine.jwt-secret-path=$HOME/.0gchaind/jwt.hex \
   --chaincfg.kzg.implementation=crate-crypto/go-kzg-4844 \
   --chaincfg.engine.rpc-dial-url=http://localhost:${OG_PORT}551 \
-  --p2p.seeds 85a9b9a1b7fa0969704db2bc37f7c100855a75d9@8.218.88.60:26656 \
   --p2p.external_address=${EXTERNAL_IP}:${OG_PORT}656
 Restart=always
 RestartSec=3
@@ -223,7 +228,6 @@ ExecStart=$HOME/go/bin/0g-geth \
   --http.port ${OG_PORT}545 \
   --ws.port ${OG_PORT}546 \
   --authrpc.port ${OG_PORT}551 \
-  --bootnodes enode://de7b86d8ac452b1413983049c20eafa2ea0851a3219c2cc12649b971c1677bd83fe24c5331e078471e52a94d95e8cde84cb9d866574fec957124e57ac6056699@8.218.88.60:30303 \
   --port ${OG_PORT}303 \
   --networkid 16601
 Restart=always
