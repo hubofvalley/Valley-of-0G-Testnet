@@ -69,13 +69,13 @@ sudo systemctl disable 0gchaind 2>/dev/null || true
 sudo systemctl disable 0g-geth 0ggeth 2>/dev/null || true
 sudo rm -f /etc/systemd/system/0gchaind.service /etc/systemd/system/0g-geth.service /etc/systemd/system/0ggeth.service
 sudo rm -f $HOME/go/bin/0gchaind $HOME/go/bin/0g-geth $HOME/go/bin/0ggeth
-rm -rf $HOME/.0gchaind $HOME/galileo $HOME/galileo-v3.0.3 $HOME/galileo-v3.0.3.tar.gz
+rm -rf $HOME/.0gchaind $HOME/galileo $HOME/galileo-v3.0.4 $HOME/galileo-v3.0.4.tar.gz
 
 echo "? Cleanup complete."
 
 # ==== DEPENDENCIES ====
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y curl git wget htop tmux build-essential jq make lz4 gcc unzip
+sudo apt install -y curl git wget htop tmux build-essential jq make lz4 gcc unzip ufw
 
 # ==== INSTALL GO ====
 cd $HOME && ver="1.22.5"
@@ -87,13 +87,13 @@ source ~/.bash_profile
 [ ! -d ~/go/bin ] && mkdir -p ~/go/bin
 go version
 
-# ==== DOWNLOAD GALILEO v3.0.3 ====
+# ==== DOWNLOAD GALILEO v3.0.4 ====
 cd $HOME
 sudo rm -rf galileo
-wget -q https://github.com/0gfoundation/0gchain-NG/releases/download/v3.0.3/galileo-v3.0.3.tar.gz -O galileo-v3.0.3.tar.gz
-tar -xzvf galileo-v3.0.3.tar.gz
-mv galileo-v3.0.3 galileo
-sudo rm galileo-v3.0.3.tar.gz
+wget -q https://github.com/0gfoundation/0gchain-NG/releases/download/v3.0.4/galileo-v3.0.4.tar.gz -O galileo-v3.0.4.tar.gz
+tar -xzvf galileo-v3.0.4.tar.gz
+mv galileo-v3.0.4 galileo
+sudo rm galileo-v3.0.4.tar.gz
 
 # ==== MAKE BINARIES EXECUTABLE ====
 sudo chmod +x $HOME/galileo/$NODE_TYPE/bin/geth
@@ -229,6 +229,7 @@ ExecStart=$HOME/go/bin/0g-geth \
   --ws.port ${OG_PORT}546 \
   --authrpc.port ${OG_PORT}551 \
   --port ${OG_PORT}303 \
+  --discovery.port ${OG_PORT}303 \
   --networkid 16602
 Restart=always
 RestartSec=3

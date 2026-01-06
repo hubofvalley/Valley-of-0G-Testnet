@@ -41,7 +41,8 @@ BASE_URL="https://github.com/0gfoundation/0gchain-NG/releases/download"
 # Display menu
 echo "Select version to update:"
 echo "a) v3.0.2"
-echo "b) v3.0.3 (Latest version)"
+echo "b) v3.0.3"
+echo "c) v3.0.4 (Latest version)"
 
 read -p "Enter the letter corresponding to the version: " choice
 
@@ -58,6 +59,9 @@ case $choice in
         ;;
     b)
         update_version "v3.0.3" "$BASE_URL/3.0.3"
+        ;;
+    c)
+        update_version "v3.0.4" "$BASE_URL/3.0.4"
         ;;
     *)
         echo "Invalid choice. Exiting."
