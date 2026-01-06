@@ -32,6 +32,7 @@ if [ -z "$OG_PORT" ]; then
     OG_PORT=26
 fi
 read -p "Do you want to enable the indexer? (yes/no): " ENABLE_INDEXER
+read -p "Configure UFW firewall rules for 0G? (y/n): " SETUP_UFW
 
 # Extra prompts for VALIDATOR
 if [ "$NODE_TYPE" = "validator" ]; then
@@ -86,6 +87,17 @@ echo 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' >> ~/.bash_profile
 source ~/.bash_profile
 [ ! -d ~/go/bin ] && mkdir -p ~/go/bin
 go version
+
+# Optional: Configure UFW based on chosen ports
+if [[ "$SETUP_UFW" =~ ^[Yy]$ ]]; then
+    sudo apt install -y ufw
+    sudo ufw allow 22/tcp comment "SSH Access"
+    sudo ufw allow ${OG_PORT}303/tcp comment "0g-geth P2P"
+    sudo ufw allow ${OG_PORT}303/udp comment "0g-geth discovery"
+    sudo ufw allow ${OG_PORT}656/tcp comment "0g CometBFT P2P"
+    sudo ufw --force enable
+    sudo ufw status verbose
+fi
 
 # ==== DOWNLOAD GALILEO v3.0.4 ====
 cd $HOME
