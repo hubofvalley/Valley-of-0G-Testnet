@@ -4,6 +4,18 @@ function update_version {
     VERSION=$1
     RELEASE_URL="$2/galileo-${VERSION}.tar.gz"
     BACKUP_DIR="$HOME/backups"
+    
+    # ===== CHOOSE NODE TYPE =====
+    while true; do
+        read -p "Deploy type? (validator/rpc): " NODE_TYPE
+        NODE_TYPE=$(echo "$NODE_TYPE" | tr '[:upper:]' '[:lower:]')
+        if [[ "$NODE_TYPE" == "validator" || "$NODE_TYPE" == "rpc" ]]; then
+          break
+        else
+          echo "Please type exactly 'validator' or 'rpc'."
+        fi
+    done
+
  
     echo "Updating to version $VERSION..."
     
@@ -23,8 +35,8 @@ function update_version {
     tar -xzf galileo-${VERSION}.tar.gz || { echo "Extraction failed"; exit 1; }
     rm galileo-${VERSION}.tar.gz
  
-    cp galileo-${VERSION}/bin/geth $HOME/go/bin/0g-geth
-    cp galileo-${VERSION}/bin/0gchaind $HOME/go/bin/0gchaind
+    cp galileo-${VERSION}/$NODE_TYPE/bin/geth $HOME/go/bin/0g-geth
+    cp galileo-${VERSION}/$NODE_TYPE/bin/0gchaind $HOME/go/bin/0gchaind
     sudo chmod +x $HOME/go/bin/0g-geth
     sudo chmod +x $HOME/go/bin/0gchaind
 
