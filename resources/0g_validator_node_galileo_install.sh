@@ -92,9 +92,9 @@ go version
 if [[ "$SETUP_UFW" =~ ^[Yy]$ ]]; then
     sudo apt install -y ufw
     sudo ufw allow 22/tcp comment "SSH Access"
-    sudo ufw allow ${OG_PORT}303/tcp comment "0g-geth P2P"
-    sudo ufw allow ${OG_PORT}303/udp comment "0g-geth discovery"
-    sudo ufw allow ${OG_PORT}656/tcp comment "0g CometBFT P2P"
+    sudo ufw allow ${OG_PORT}303/tcp comment "0g-geth Testnet P2P"
+    sudo ufw allow ${OG_PORT}303/udp comment "0g-geth Testnet discovery"
+    sudo ufw allow ${OG_PORT}656/tcp comment "0g Testnet CometBFT P2P"
     sudo ufw --force enable
     sudo ufw status verbose
 fi
