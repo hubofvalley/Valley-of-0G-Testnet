@@ -154,8 +154,8 @@ function deploy_validator_node() {
 
     echo -e "\n${YELLOW}2. SYSTEM IMPACT:${RESET}"
     echo -e "${GREEN}New Services:${RESET}"
-    echo -e "  • ${CYAN}0gchaind.service${RESET} (Consensus Client)"
-    echo -e "  • ${CYAN}0g-geth.service${RESET} (Execution Client)"
+    echo -e "  • ${CYAN}${OG_SERVICE_NAME}.service${RESET} (Consensus Client)"
+    echo -e "  • ${CYAN}${OG_GETH_SERVICE_NAME}.service${RESET} (Execution Client)"
     
     echo -e "\n${RED}Existing Services to be Replaced:${RESET}"
     echo -e "  • ${CYAN}0gchaind${RESET}"

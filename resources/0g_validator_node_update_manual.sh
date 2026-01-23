@@ -1,5 +1,12 @@
 #!/bin/bash
 
+# Source environment variables
+source $HOME/.bash_profile 2>/dev/null
+
+# Set defaults for service names
+OG_SERVICE_NAME=${OG_SERVICE_NAME:-0gchaind}
+OG_GETH_SERVICE_NAME=${OG_GETH_SERVICE_NAME:-0g-geth}
+
 function update_version {
     VERSION=$1
     RELEASE_URL="$2/galileo-${VERSION}.tar.gz"
@@ -20,8 +27,8 @@ function update_version {
     echo "Updating to version $VERSION..."
     
     # Stop services
-    sudo systemctl stop 0g-geth.service || { echo "Failed to stop 0g-geth"; exit 1; }
-    sudo systemctl stop 0gchaind.service || { echo "Failed to stop 0gchaind"; exit 1; }
+    sudo systemctl stop ${OG_GETH_SERVICE_NAME} || { echo "Failed to stop ${OG_GETH_SERVICE_NAME}"; exit 1; }
+    sudo systemctl stop ${OG_SERVICE_NAME} || { echo "Failed to stop ${OG_SERVICE_NAME}"; exit 1; }
  
     # Backup old binaries
     TIMESTAMP=$(date +%Y%m%d%H%M%S)
@@ -42,8 +49,8 @@ function update_version {
 
     # Restart services
     sudo systemctl daemon-reload
-    sudo systemctl start 0g-geth.service || { echo "Failed to start 0g-geth"; exit 1; }
-    sudo systemctl start 0gchaind.service || { echo "Failed to start 0gchaind"; exit 1; }
+    sudo systemctl start ${OG_GETH_SERVICE_NAME} || { echo "Failed to start ${OG_GETH_SERVICE_NAME}"; exit 1; }
+    sudo systemctl start ${OG_SERVICE_NAME} || { echo "Failed to start ${OG_SERVICE_NAME}"; exit 1; }
 
     echo "Update to 0gchain-Galileo $VERSION completed!"
 }

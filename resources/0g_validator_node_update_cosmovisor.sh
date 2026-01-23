@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# Source environment variables
+source $HOME/.bash_profile 2>/dev/null
+
+# Set defaults for service names
+OG_SERVICE_NAME=${OG_SERVICE_NAME:-0gchaind}
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -46,7 +52,7 @@ init_cosmovisor() {
 
 # Function to initialize cosmovisor
 init_cosmovisor052() {
-    sudo systemctl stop 0gchaind
+    sudo systemctl stop ${OG_SERVICE_NAME}
 
     # Download genesis 0g version
     mkdir -p 0g-v0.5.3
@@ -63,7 +69,7 @@ init_cosmovisor052() {
     sudo rm -r $HOME/.0gchain/data/upgrade-info.json
     mkdir -p $HOME/.0gchain/cosmovisor/upgrades
     mkdir -p $HOME/.0gchain/cosmovisor/backup
-    sudo systemctl restart 0gchaind
+    sudo systemctl restart ${OG_SERVICE_NAME}
 }
 
 # Ask the user if cosmovisor is installed
@@ -107,9 +113,9 @@ echo "export DAEMON_DATA_BACKUP_DIR=$input3" >> $HOME/.bash_profile
 source $HOME/.bash_profile
 
 # Create or update the systemd service file
-sudo tee /etc/systemd/system/0gchaind.service > /dev/null <<EOF
+sudo tee /etc/systemd/system/${OG_SERVICE_NAME}.service > /dev/null <<EOF
 [Unit]
-Description=Cosmovisor 0G Node
+Description=Cosmovisor 0G Node - ${OG_SERVICE_NAME}
 After=network.target
 
 [Service]

@@ -1,5 +1,12 @@
 #!/bin/bash
 
+# Source environment variables
+source $HOME/.bash_profile 2>/dev/null
+
+# Set defaults for service names
+OG_SERVICE_NAME=${OG_SERVICE_NAME:-0gchaind}
+OG_GETH_SERVICE_NAME=${OG_GETH_SERVICE_NAME:-0g-geth}
+
 # ANSI color codes
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -95,8 +102,8 @@ choose_itrocket_snapshot() {
     EXEC_DIR="$HOME/.0gchaind/0g-home/geth-home/geth"
     CONS_DIR="$HOME/.0gchaind/0g-home/0gchaind-home"
 
-    sudo systemctl stop 0gchaind 0g-geth || sudo systemctl stop 0gchaind 0ggeth
-    sudo systemctl disable 0gchaind 0g-geth || sudo systemctl disable 0gchaind 0ggeth
+    sudo systemctl stop ${OG_SERVICE_NAME} ${OG_GETH_SERVICE_NAME}
+    sudo systemctl disable ${OG_SERVICE_NAME} ${OG_GETH_SERVICE_NAME}
 
     if [ -f "$CONS_DIR/data/priv_validator_state.json" ]; then
         cp "$CONS_DIR/data/priv_validator_state.json" "$HOME/.0gchaind/priv_validator_state.json.backup"
@@ -121,8 +128,8 @@ choose_itrocket_snapshot() {
         cp "$HOME/.0gchaind/priv_validator_state.json.backup" "$CONS_DIR/data/priv_validator_state.json"
     fi
 
-    sudo systemctl enable 0gchaind 0g-geth || sudo systemctl enable 0gchaind 0ggeth
-    sudo systemctl restart 0gchaind 0g-geth || sudo systemctl restart 0gchaind 0ggeth
+    sudo systemctl enable ${OG_SERVICE_NAME} ${OG_GETH_SERVICE_NAME}
+    sudo systemctl restart ${OG_SERVICE_NAME} ${OG_GETH_SERVICE_NAME}
 
     echo -e "${GREEN}0G snapshot setup completed successfully.${NC}"
 }
