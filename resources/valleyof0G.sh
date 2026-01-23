@@ -11,7 +11,7 @@ RESET='\033[0m'
 # Service Name Detection - Ask Once, Remember Forever
 source $HOME/.bash_profile 2>/dev/null
 
-if [ -z "$OG_SERVICE_NAME" ]; then
+if [ -z "${OG_SERVICE_NAME:-}" ]; then
     echo -e "${YELLOW}Service name configuration not found.${RESET}"
     read -p "Enter Consensus Service Name (default '0gchaind'): " INPUT_SVC
     OG_SERVICE_NAME=${INPUT_SVC:-0gchaind}
@@ -19,7 +19,7 @@ if [ -z "$OG_SERVICE_NAME" ]; then
     export OG_SERVICE_NAME
 fi
 
-if [ -z "$OG_GETH_SERVICE_NAME" ]; then
+if [ -z "${OG_GETH_SERVICE_NAME:-}" ]; then
     read -p "Enter Geth Service Name (default '0g-geth'): " INPUT_GETH
     OG_GETH_SERVICE_NAME=${INPUT_GETH:-0g-geth}
     echo "export OG_GETH_SERVICE_NAME=\"$OG_GETH_SERVICE_NAME\"" >> $HOME/.bash_profile
