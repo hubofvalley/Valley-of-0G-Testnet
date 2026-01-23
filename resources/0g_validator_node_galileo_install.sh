@@ -48,11 +48,26 @@ if [ "$NODE_TYPE" = "validator" ]; then
   done
 fi
 
+# Service Name Configuration (for multi-instance support)
+if [ -z "$OG_SERVICE_NAME" ]; then
+    read -p "Enter Consensus Service Name (default '0gchaind'): " OG_SERVICE_NAME
+    OG_SERVICE_NAME=${OG_SERVICE_NAME:-0gchaind}
+fi
+
+if [ -z "$OG_GETH_SERVICE_NAME" ]; then
+    read -p "Enter Geth Service Name (default '0g-geth'): " OG_GETH_SERVICE_NAME
+    OG_GETH_SERVICE_NAME=${OG_GETH_SERVICE_NAME:-0g-geth}
+fi
+
+echo "Using Service Names: ${OG_SERVICE_NAME} and ${OG_GETH_SERVICE_NAME}"
+
 # Save env vars
 {
   echo "export MONIKER=\"$MONIKER\""
   echo "export OG_PORT=\"$OG_PORT\""
   echo "export NODE_TYPE=\"$NODE_TYPE\""
+  echo "export OG_SERVICE_NAME=\"$OG_SERVICE_NAME\""
+  echo "export OG_GETH_SERVICE_NAME=\"$OG_GETH_SERVICE_NAME\""
   if [ "$NODE_TYPE" = "validator" ]; then
     echo "export ETH_RPC_URL=\"$ETH_RPC_URL\""
     echo "export BLOCK_NUM=\"$BLOCK_NUM\""
@@ -64,11 +79,13 @@ fi
 # ==== CLEANUP EXISTING INSTALLATION ====
 echo -e "\n?? Cleaning up any existing 0G node installation..."
 
-sudo systemctl stop 0gchaind 2>/dev/null || true
-sudo systemctl stop 0g-geth 0ggeth 2>/dev/null || true
-sudo systemctl disable 0gchaind 2>/dev/null || true
-sudo systemctl disable 0g-geth 0ggeth 2>/dev/null || true
+# Stop and disable services (uses both hardcoded and custom names for compatibility)
+sudo systemctl stop 0gchaind ${OG_SERVICE_NAME} 2>/dev/null || true
+sudo systemctl stop 0g-geth 0ggeth ${OG_GETH_SERVICE_NAME} 2>/dev/null || true
+sudo systemctl disable 0gchaind ${OG_SERVICE_NAME} 2>/dev/null || true
+sudo systemctl disable 0g-geth 0ggeth ${OG_GETH_SERVICE_NAME} 2>/dev/null || true
 sudo rm -f /etc/systemd/system/0gchaind.service /etc/systemd/system/0g-geth.service /etc/systemd/system/0ggeth.service
+sudo rm -f /etc/systemd/system/${OG_SERVICE_NAME}.service /etc/systemd/system/${OG_GETH_SERVICE_NAME}.service 2>/dev/null || true
 sudo rm -f $HOME/go/bin/0gchaind $HOME/go/bin/0g-geth $HOME/go/bin/0ggeth
 rm -rf $HOME/.0gchaind $HOME/galileo $HOME/galileo-v3.0.4 $HOME/galileo-v3.0.4.tar.gz
 
@@ -169,27 +186,27 @@ sed -i "s/^# *Port = .*/# Port = ${OG_PORT}901/" $GCONFIG
 sed -i "s/^# *InfluxDBEndpoint = .*/# InfluxDBEndpoint = \"http:\/\/localhost:${OG_PORT}086\"/" $GCONFIG
 
 # ==== SYSTEMD SERVICES ====
-# 0gchaind.service (branch on NODE_TYPE)
+# Consensus service file (branch on NODE_TYPE)
 if [ "$NODE_TYPE" = "validator" ]; then
-sudo tee /etc/systemd/system/0gchaind.service > /dev/null <<EOF
+sudo tee /etc/systemd/system/${OG_SERVICE_NAME}.service > /dev/null <<EOF
 [Unit]
-Description=0gchaind Node Service (Validator)
+Description=0gchaind Node Service - ${OG_SERVICE_NAME} (Validator)
 After=network-online.target
 
 [Service]
 User=$USER
 Environment=CHAIN_SPEC=testnet
 WorkingDirectory=$HOME/.0gchaind
-ExecStart=$HOME/go/bin/0gchaind start \
-  --chaincfg.chain-spec testnet \
-  --chaincfg.restaking.enabled \
-  --chaincfg.restaking.symbiotic-rpc-dial-url ${ETH_RPC_URL} \
-  --chaincfg.restaking.symbiotic-get-logs-block-range ${BLOCK_NUM} \
-  --home $HOME/.0gchaind/0g-home/0gchaind-home \
-  --chaincfg.kzg.trusted-setup-path=$HOME/.0gchaind/kzg-trusted-setup.json \
-  --chaincfg.engine.jwt-secret-path=$HOME/.0gchaind/jwt.hex \
-  --chaincfg.kzg.implementation=crate-crypto/go-kzg-4844 \
-  --chaincfg.engine.rpc-dial-url=http://localhost:${OG_PORT}551 \
+ExecStart=$HOME/go/bin/0gchaind start \\
+  --chaincfg.chain-spec testnet \\
+  --chaincfg.restaking.enabled \\
+  --chaincfg.restaking.symbiotic-rpc-dial-url ${ETH_RPC_URL} \\
+  --chaincfg.restaking.symbiotic-get-logs-block-range ${BLOCK_NUM} \\
+  --home $HOME/.0gchaind/0g-home/0gchaind-home \\
+  --chaincfg.kzg.trusted-setup-path=$HOME/.0gchaind/kzg-trusted-setup.json \\
+  --chaincfg.engine.jwt-secret-path=$HOME/.0gchaind/jwt.hex \\
+  --chaincfg.kzg.implementation=crate-crypto/go-kzg-4844 \\
+  --chaincfg.engine.rpc-dial-url=http://localhost:${OG_PORT}551 \\
   --p2p.external_address=${EXTERNAL_IP}:${OG_PORT}656
 Restart=always
 RestartSec=3
@@ -199,22 +216,22 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 EOF
 else
-sudo tee /etc/systemd/system/0gchaind.service > /dev/null <<EOF
+sudo tee /etc/systemd/system/${OG_SERVICE_NAME}.service > /dev/null <<EOF
 [Unit]
-Description=0gchaind Node Service (RPC)
+Description=0gchaind Node Service - ${OG_SERVICE_NAME} (RPC)
 After=network-online.target
 
 [Service]
 User=$USER
 Environment=CHAIN_SPEC=testnet
 WorkingDirectory=$HOME/.0gchaind
-ExecStart=$HOME/go/bin/0gchaind start \
-  --chaincfg.chain-spec testnet \
-  --home $HOME/.0gchaind/0g-home/0gchaind-home \
-  --chaincfg.kzg.trusted-setup-path=$HOME/.0gchaind/kzg-trusted-setup.json \
-  --chaincfg.engine.jwt-secret-path=$HOME/.0gchaind/jwt.hex \
-  --chaincfg.kzg.implementation=crate-crypto/go-kzg-4844 \
-  --chaincfg.engine.rpc-dial-url=http://localhost:${OG_PORT}551 \
+ExecStart=$HOME/go/bin/0gchaind start \\
+  --chaincfg.chain-spec testnet \\
+  --home $HOME/.0gchaind/0g-home/0gchaind-home \\
+  --chaincfg.kzg.trusted-setup-path=$HOME/.0gchaind/kzg-trusted-setup.json \\
+  --chaincfg.engine.jwt-secret-path=$HOME/.0gchaind/jwt.hex \\
+  --chaincfg.kzg.implementation=crate-crypto/go-kzg-4844 \\
+  --chaincfg.engine.rpc-dial-url=http://localhost:${OG_PORT}551 \\
   --p2p.external_address=${EXTERNAL_IP}:${OG_PORT}656
 Restart=always
 RestartSec=3
@@ -225,23 +242,23 @@ WantedBy=multi-user.target
 EOF
 fi
 
-# geth.service
-sudo tee /etc/systemd/system/0g-geth.service > /dev/null <<EOF
+# Geth service file
+sudo tee /etc/systemd/system/${OG_GETH_SERVICE_NAME}.service > /dev/null <<EOF
 [Unit]
-Description=0g Geth Node Service
+Description=0g Geth Node Service - ${OG_GETH_SERVICE_NAME}
 After=network-online.target
 
 [Service]
 User=$USER
 WorkingDirectory=$HOME/.0gchaind
-ExecStart=$HOME/go/bin/0g-geth \
-  --config $HOME/.0gchaind/geth-config.toml \
-  --datadir $HOME/.0gchaind/0g-home/geth-home \
-  --http.port ${OG_PORT}545 \
-  --ws.port ${OG_PORT}546 \
-  --authrpc.port ${OG_PORT}551 \
-  --port ${OG_PORT}303 \
-  --discovery.port ${OG_PORT}303 \
+ExecStart=$HOME/go/bin/0g-geth \\
+  --config $HOME/.0gchaind/geth-config.toml \\
+  --datadir $HOME/.0gchaind/0g-home/geth-home \\
+  --http.port ${OG_PORT}545 \\
+  --ws.port ${OG_PORT}546 \\
+  --authrpc.port ${OG_PORT}551 \\
+  --port ${OG_PORT}303 \\
+  --discovery.port ${OG_PORT}303 \\
   --networkid 16602
 Restart=always
 RestartSec=3
@@ -253,10 +270,10 @@ EOF
 
 # ==== START SERVICES ====
 sudo systemctl daemon-reload
-sudo systemctl enable 0gchaind
-sudo systemctl enable 0g-geth
-sudo systemctl start 0gchaind
-sudo systemctl start 0g-geth
+sudo systemctl enable ${OG_SERVICE_NAME}
+sudo systemctl enable ${OG_GETH_SERVICE_NAME}
+sudo systemctl start ${OG_SERVICE_NAME}
+sudo systemctl start ${OG_GETH_SERVICE_NAME}
 
 # ==== DONE ====
 echo -e "\n${GREEN}? 0G Node Installation Completed Successfully!${RESET}"
@@ -264,8 +281,11 @@ echo -e "\n${YELLOW}Node Configuration Summary:${RESET}"
 echo -e "Type: ${CYAN}$NODE_TYPE${RESET}"
 echo -e "Moniker: ${CYAN}$MONIKER${RESET}"
 echo -e "Port Prefix: ${CYAN}$OG_PORT${RESET}"
+echo -e "Consensus Service: ${CYAN}${OG_SERVICE_NAME}.service${RESET}"
+echo -e "Geth Service: ${CYAN}${OG_GETH_SERVICE_NAME}.service${RESET}"
 echo -e "Indexer: ${CYAN}$([ "$ENABLE_INDEXER" = "yes" ] && echo "Enabled" || echo "Disabled")${RESET}"
 [ "$NODE_TYPE" = "validator" ] && echo -e "ETH_RPC_URL: ${CYAN}$ETH_RPC_URL${RESET}\nBLOCK_NUM: ${CYAN}$BLOCK_NUM${RESET}"
 echo -e "Node ID: ${CYAN}$(0gchaind comet show-node-id --home $HOME/.0gchaind/0g-home/0gchaind-home/)${RESET}"
+echo -e "\nTo view logs: sudo journalctl -u ${OG_SERVICE_NAME} -u ${OG_GETH_SERVICE_NAME} -fn 100"
 echo -e "\n${YELLOW}Press Enter to continue to main menu...${RESET}"
 read -r
