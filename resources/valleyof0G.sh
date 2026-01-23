@@ -910,7 +910,6 @@ function show_guidelines() {
 
 # Menu function
 function menu() {
-    detect_geth_service_file
     realtime_block_height=$(curl -s -X POST "https://evmrpc-testnet.0g.ai" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' | jq -r '.result' | xargs printf "%d\n")
     echo -e "${ORANGE}Valley of 0G Testnet${RESET}"
     echo "Main Menu:"
