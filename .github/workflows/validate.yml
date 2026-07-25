@@ -1,0 +1,45 @@
+name: Validate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shell:
+    name: Shell scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Check Bash syntax
+        shell: bash
+        run: |
+          git ls-files -z '*.sh' | xargs -0 -r -n1 bash -n
+
+      - name: Run ShellCheck
+        shell: bash
+        run: |
+          git ls-files -z '*.sh' | xargs -0 -r shellcheck --severity=error
+
+      - name: Validate JSON
+        shell: bash
+        run: |
+          git ls-files -z '*.json' | xargs -0 -r -n1 jq empty
+
+      - name: Run repository tests
+        shell: bash
+        run: |
+          while IFS= read -r -d '' test_file; do
+            bash "$test_file"
+          done < <(git ls-files -z 'tests/test_*.sh')
