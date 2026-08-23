@@ -5,7 +5,7 @@
 <h1 align="center">Valley of 0G Testnet</h1>
 
 <p align="center">
-  <strong>A comprehensive toolkit for deploying and managing 0G validator and storage nodes on Galileo testnet</strong>
+  <strong>Toolkit for deploying and managing 0G validator and storage nodes on Galileo testnet</strong>
 </p>
 
 <p align="center">
@@ -16,11 +16,11 @@
 
 ---
 
-## 🚀 Overview
+## Overview
 
 Valley of 0G Testnet is an open-source project by **Grand Valley** that provides automated scripts for deploying and managing 0G validator nodes and storage infrastructure on the **Galileo testnet**.
 
-## 📋 System Requirements
+## System Requirements
 
 ### Validator Node
 | Category | Requirements |
@@ -38,7 +38,7 @@ Valley of 0G Testnet is an open-source project by **Grand Valley** that provides
 | Storage | 500GB-1TB NVMe SSD |
 | Bandwidth | 100 MBit/s |
 
-## ⚡ Quick Start
+## Getting started
 
 Run the main interactive menu:
 
@@ -46,7 +46,7 @@ Run the main interactive menu:
 bash <(curl -s https://raw.githubusercontent.com/hubofvalley/Testnet-Guides/main/0g%20\(zero-gravity\)/resources/valleyof0G.sh)
 ```
 
-## 📦 Features
+## Features
 
 ### Validator Node
 - Deploy/re-deploy validator node
@@ -65,7 +65,7 @@ bash <(curl -s https://raw.githubusercontent.com/hubofvalley/Testnet-Guides/main
 - Deploy/update Storage KV
 - Show status and logs
 
-## 🔧 Current Versions
+## Current Versions
 
 | Component | Version |
 |-----------|---------|
@@ -74,7 +74,7 @@ bash <(curl -s https://raw.githubusercontent.com/hubofvalley/Testnet-Guides/main
 | Storage KV | v1.4.0 |
 | Chain | 0gchain-16601 (Galileo) |
 
-## 🌐 Grand Valley Public Endpoints
+## Grand Valley Public Endpoints
 
 | Type | URL |
 |------|-----|
@@ -84,17 +84,17 @@ bash <(curl -s https://raw.githubusercontent.com/hubofvalley/Testnet-Guides/main
 | Peer | `a97c8615903e795135066842e5739e30d64e2342@peer-0g.grandvalleys.com:28656` |
 | Explorer | `https://explorer.grandvalleys.com` |
 
-## 🔐 Privacy & Security
+## Privacy & Security
 
 - **No external data storage** - All operations run locally
 - **No phishing links** - All URLs are for legitimate 0G operations
 - **Open source** - Full audit trail available
 
-## 📖 Documentation
+## Documentation
 
 For detailed documentation, see the [docs/](docs/) folder.
 
-## 🔗 Links
+## Links
 
 **0G Labs:**
 - [Website](https://0g.ai) | [Docs](https://docs.0g.ai) | [X/Twitter](https://x.com/0G_labs)
@@ -102,10 +102,10 @@ For detailed documentation, see the [docs/](docs/) folder.
 **Grand Valley:**
 - [GitHub](https://github.com/hubofvalley) | [X/Twitter](https://x.com/bacvalley) | [Testnet Guide](https://github.com/hubofvalley/Testnet-Guides/tree/main/0g%20(zero-gravity))
 
-## 📧 Contact
+## Contact
 
 Email: letsbuidltogether@grandvalleys.com
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
