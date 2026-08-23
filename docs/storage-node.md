@@ -53,7 +53,7 @@ Deploy and manage a 0G storage node on Galileo testnet.
 2. Select **"Storage Node"** → **"Apply Storage Node Snapshot"**
 3. Choose Turbo or Standard contract snapshot
 
-> ⚠️ **Note**: Snapshots contain `flow_db` only. Your `data_db` will auto-create on start. Never use pre-made `data_db` - it would mine for someone else's wallet!
+>  **Note**: Snapshots contain `flow_db` only. Your `data_db` will auto-create on start. Never use pre-made `data_db` - it would mine for someone else's wallet!
 
 ## Related Documentation
 

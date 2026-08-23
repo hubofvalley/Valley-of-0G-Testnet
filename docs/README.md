@@ -2,7 +2,7 @@
 
 Documentation for the Valley of 0G Testnet toolkit (Galileo chain).
 
-## 📚 Documentation
+## Documentation
 
 | Document | Description |
 |----------|-------------|
@@ -11,7 +11,7 @@ Documentation for the Valley of 0G Testnet toolkit (Galileo chain).
 | [storage-kv.md](storage-kv.md) | Storage KV service guide |
 | [snapshots.md](snapshots.md) | Snapshot application guide |
 
-## 🚀 Quick Navigation
+## Common tasks
 
 | I want to... | Go to |
 |--------------|-------|
@@ -20,7 +20,7 @@ Documentation for the Valley of 0G Testnet toolkit (Galileo chain).
 | Set up Storage KV | [storage-kv.md](storage-kv.md) |
 | Apply a snapshot | [snapshots.md](snapshots.md) |
 
-## 🔧 Current Versions
+## Current Versions
 
 | Component | Version |
 |-----------|---------|
@@ -29,7 +29,7 @@ Documentation for the Valley of 0G Testnet toolkit (Galileo chain).
 | Storage KV | v1.4.0 |
 | Chain | 0gchain-16601 (Galileo) |
 
-## ❓ Need Help?
+## Support
 
 - Open an issue on [GitHub](https://github.com/hubofvalley/Valley-of-0G-Testnet/issues)
 - Email: letsbuidltogether@grandvalleys.com

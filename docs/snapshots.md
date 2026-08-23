@@ -21,7 +21,7 @@ Apply snapshots for faster node synchronization on Galileo testnet.
 
 ### Important Notes
 
-> ⚠️ **Security Warning**:
+>  **Security Warning**:
 > - Snapshots contain `flow_db` (blockchain data) only
 > - `data_db` (mining storage) will auto-create when node starts
 > - **Never use pre-made `data_db`** - it would mine for someone else's wallet!
