@@ -11,14 +11,14 @@
 <p align="center">
   <a href="https://0g.ai" target="_blank">0G Labs</a> •
   <a href="https://docs.0g.ai" target="_blank">Official Docs</a> •
-  <a href="https://github.com/hubofvalley" target="_blank">Grand Valley</a>
+  <a href="https://github.com/hubofvalley" target="_blank">Baconvalley</a>
 </p>
 
 ---
 
 ## Overview
 
-Valley of 0G Testnet is an open-source project by **Grand Valley** that provides automated scripts for deploying and managing 0G validator nodes and storage infrastructure on the **Galileo testnet**.
+Valley of 0G Testnet is an open-source project by **Baconvalley** that provides automated scripts for deploying and managing 0G validator nodes and storage infrastructure on the **Galileo testnet**.
 
 ## System Requirements
 
@@ -43,7 +43,15 @@ Valley of 0G Testnet is an open-source project by **Grand Valley** that provides
 Run the main interactive menu:
 
 ```bash
-bash <(curl -s https://raw.githubusercontent.com/hubofvalley/Testnet-Guides/main/0g%20\(zero-gravity\)/resources/valleyof0G.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/hubofvalley/Valley-of-0G-Testnet/main/resources/valleyof0G.sh)
+```
+
+Read-only health/configuration inspection is available without entering the interactive menu:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/hubofvalley/Valley-of-0G-Testnet/main/resources/valleyof0G.sh) doctor
+bash <(curl -fsSL https://raw.githubusercontent.com/hubofvalley/Valley-of-0G-Testnet/main/resources/valleyof0G.sh) doctor --json
+bash <(curl -fsSL https://raw.githubusercontent.com/hubofvalley/Valley-of-0G-Testnet/main/resources/valleyof0G.sh) doctor --strict
 ```
 
 ## Features
@@ -69,12 +77,12 @@ bash <(curl -s https://raw.githubusercontent.com/hubofvalley/Testnet-Guides/main
 
 | Component | Version |
 |-----------|---------|
-| Validator Node | v3.0.3 |
+| Validator Node | v3.0.4 (managed; newer upstream releases require review) |
 | Storage Node | v1.1.0 |
 | Storage KV | v1.4.0 |
-| Chain | 0gchain-16601 (Galileo) |
+| EVM Chain ID | 16602 (Galileo) |
 
-## Grand Valley Public Endpoints
+## Baconvalley Public Endpoints
 
 | Type | URL |
 |------|-----|
@@ -99,8 +107,8 @@ For detailed documentation, see the [docs/](docs/) folder.
 **0G Labs:**
 - [Website](https://0g.ai) | [Docs](https://docs.0g.ai) | [X/Twitter](https://x.com/0G_labs)
 
-**Grand Valley:**
-- [GitHub](https://github.com/hubofvalley) | [X/Twitter](https://x.com/bacvalley) | [Testnet Guide](https://github.com/hubofvalley/Testnet-Guides/tree/main/0g%20(zero-gravity))
+**Baconvalley:**
+- [GitHub](https://github.com/hubofvalley) | [X/Twitter](https://x.com/bacvalley)
 
 ## Contact
 

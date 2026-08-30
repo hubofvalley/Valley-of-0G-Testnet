@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# Colors for operator warnings.
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+RESET='\033[0m'
+
 # Define new boot nodes
 BOOT_NODES=(
   "/ip4/47.251.79.83/udp/1234/p2p/16Uiu2HAkvJYQABP1MdvfWfUZUzGLx1sBSDZ2AT92EFKcMCCPVawV"
@@ -10,11 +16,46 @@ BOOT_NODES=(
   "/ip4/47.76.49.188/udp/1234/p2p/16Uiu2HAmBb7PQzvfZjHBENcF7E7mZaiHSrpBoH7mKTyNijYdqMM6"
 )
 
-# Function to query the latest block number from a JSON-RPC endpoint
+readonly EXPECTED_EVM_CHAIN_ID="16602"
+
+rpc_result() {
+    local endpoint=$1 method=$2
+    curl -fsS --connect-timeout 4 --max-time 8 -X POST "$endpoint" \
+        -H "Content-Type: application/json" \
+        -d "{\"jsonrpc\":\"2.0\",\"method\":\"${method}\",\"params\":[],\"id\":1}" 2>/dev/null |
+        jq -r '.result // empty' 2>/dev/null || true
+}
+
+hex_to_dec() {
+    local value=$1
+    if [[ "$value" =~ ^0x[0-9a-fA-F]+$ ]]; then
+        printf '%d\n' "$((16#${value#0x}))"
+    elif [[ "$value" =~ ^[0-9]+$ ]]; then
+        printf '%s\n' "$value"
+    fi
+}
+
 query_block_number() {
-    local endpoint=$1
-    local block_number=$(curl -s -X POST $endpoint -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' | jq -r '.result' | xargs printf "%d\n")
-    echo $block_number
+    local endpoint=$1 chain_raw chain_id block_raw block_number
+    chain_raw=$(rpc_result "$endpoint" eth_chainId)
+    chain_id=$(hex_to_dec "$chain_raw")
+    if [ "$chain_id" != "$EXPECTED_EVM_CHAIN_ID" ]; then
+        printf 'REJECTED chain=%s expected=%s\n' "${chain_id:-unavailable}" "$EXPECTED_EVM_CHAIN_ID"
+        return 1
+    fi
+    block_raw=$(rpc_result "$endpoint" eth_blockNumber)
+    block_number=$(hex_to_dec "$block_raw")
+    printf '%s\n' "${block_number:-unavailable}"
+}
+
+require_rpc_chain() {
+    local endpoint=$1 chain_raw chain_id
+    chain_raw=$(rpc_result "$endpoint" eth_chainId)
+    chain_id=$(hex_to_dec "$chain_raw")
+    if [ "$chain_id" != "$EXPECTED_EVM_CHAIN_ID" ]; then
+        echo "RPC rejected: $endpoint reports chain ${chain_id:-unavailable}; expected $EXPECTED_EVM_CHAIN_ID." >&2
+        return 1
+    fi
 }
 
 # Function to prompt user to choose JSON-RPC endpoint
@@ -26,7 +67,8 @@ choose_json_rpc_endpoint() {
 
     if [ "$JSON_RPC_CHOICE" == "1" ]; then
         read -p "Enter your JSON-RPC endpoint: " BLOCKCHAIN_RPC_ENDPOINT
-        BLOCK_NUMBER=$(query_block_number $BLOCKCHAIN_RPC_ENDPOINT)
+        require_rpc_chain "$BLOCKCHAIN_RPC_ENDPOINT" || { choose_json_rpc_endpoint; return; }
+        BLOCK_NUMBER=$(query_block_number "$BLOCKCHAIN_RPC_ENDPOINT")
         echo "Latest block number for $BLOCKCHAIN_RPC_ENDPOINT: $BLOCK_NUMBER"
         read -p "Do you want to continue with this RPC endpoint? (yes/no): " CONTINUE_CHOICE
         if [ "$CONTINUE_CHOICE" != "yes" ]; then
@@ -36,31 +78,38 @@ choose_json_rpc_endpoint() {
         echo "Available public JSON-RPC endpoints:"
         echo "1. https://lightnode-json-rpc-0g.grandvalleys.com [$(query_block_number https://lightnode-json-rpc-0g.grandvalleys.com)]"
         echo "2. https://evmrpc-testnet.0g.ai [$(query_block_number https://evmrpc-testnet.0g.ai)]"
-        echo "3. https://rpc.ankr.com/0g_newton [$(query_block_number https://rpc.ankr.com/0g_newton)]"
-        echo "4. https://0g-json-rpc-public.originstake.com [$(query_block_number https://0g-json-rpc-public.originstake.com)]"
-        echo "5. https://og-testnet-jsonrpc.itrocket.net:443 [$(query_block_number https://og-testnet-jsonrpc.itrocket.net:443)]"
-        echo "6. https://0g-evmrpc-zstake.xyz [$(query_block_number https://0g-evmrpc-zstake.xyz)]"
-        echo "7. https://zerog-testnet-json-rpc.contributiondao.com [$(query_block_number https://zerog-testnet-json-rpc.contributiondao.com)]"
         read -p "Enter the number of your chosen public JSON-RPC endpoint: " PUBLIC_RPC_CHOICE
 
         case $PUBLIC_RPC_CHOICE in
             1) BLOCKCHAIN_RPC_ENDPOINT="https://lightnode-json-rpc-0g.grandvalleys.com";;
             2) BLOCKCHAIN_RPC_ENDPOINT="https://evmrpc-testnet.0g.ai";;
-            3) BLOCKCHAIN_RPC_ENDPOINT="https://rpc.ankr.com/0g_newton";;
-            4) BLOCKCHAIN_RPC_ENDPOINT="https://0g-json-rpc-public.originstake.com";;
-            5) BLOCKCHAIN_RPC_ENDPOINT="https://og-testnet-jsonrpc.itrocket.net:443";;
-            6) BLOCKCHAIN_RPC_ENDPOINT="https://0g-evmrpc-zstake.xyz";;
-            7) BLOCKCHAIN_RPC_ENDPOINT="https://zerog-testnet-json-rpc.contributiondao.com";;
             *) echo "Invalid choice. Exiting."; exit 1;;
         esac
+        require_rpc_chain "$BLOCKCHAIN_RPC_ENDPOINT" || { echo "Selected endpoint is unavailable or wrong-chain." >&2; exit 1; }
     else
         echo "Invalid choice. Exiting."; exit 1
     fi
 }
 
+# RPC validation happens before destructive redeploy, so make its dependencies
+# available before asking the operator to confirm deletion.
+command -v curl >/dev/null 2>&1 || { sudo apt-get update -y && sudo apt-get install -y curl; }
+command -v jq >/dev/null 2>&1 || { sudo apt-get update -y && sudo apt-get install -y jq; }
+
+# Collect and validate required input before destructive redeploy begins.
+read -rsp "Enter your private key: " PRIVATE_KEY
+echo
+[ -n "$PRIVATE_KEY" ] || { echo "Private key cannot be empty. Exiting." >&2; exit 1; }
+choose_json_rpc_endpoint
+echo "Current JSON-RPC endpoint: $BLOCKCHAIN_RPC_ENDPOINT"
+
 echo -e "${YELLOW}⚠️  This script will DELETE your existing 0G Storage Node (${GREEN}zgs.service${YELLOW}) and install a fresh one.${RESET}"
 echo -e "${RED}Proceed ONLY if you are aware of the consequences.${RESET}"
-read -p "Press Enter to continue or Ctrl+C to cancel..."
+read -r -p "Type REDEPLOY-STORAGE to continue: " REDEPLOY_CONFIRM
+if [ "$REDEPLOY_CONFIRM" != "REDEPLOY-STORAGE" ]; then
+    echo "Redeploy cancelled before services or storage data were changed."
+    exit 0
+fi
 
 # Delete previous installation
 echo -e "${RED}Deleting previous installation of 0G Storage Node...${RESET}"
@@ -70,17 +119,8 @@ sudo rm -f /etc/systemd/system/zgs.service
 sudo rm -rf $HOME/0g-storage-node
 echo -e "${GREEN}Previous storage node deleted successfully.${RESET}"
 
-# Prompt user for private key
-read -p "Enter your private key: " PRIVATE_KEY
-echo "private key: $PRIVATE_KEY"
-
 # Set contract type to turbo by default
 CONTRACT_TYPE="turbo"
-
-# Prompt user to choose JSON-RPC endpoint
-choose_json_rpc_endpoint
-
-echo "Current JSON-RPC endpoint: $BLOCKCHAIN_RPC_ENDPOINT"
 
 # 1. Install dependencies for building from source
 sudo apt-get update -y

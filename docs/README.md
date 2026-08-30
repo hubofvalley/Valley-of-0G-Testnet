@@ -10,6 +10,7 @@ Documentation for the Valley of 0G Testnet toolkit (Galileo chain).
 | [storage-node.md](storage-node.md) | Storage node setup and operations |
 | [storage-kv.md](storage-kv.md) | Storage KV service guide |
 | [snapshots.md](snapshots.md) | Snapshot application guide |
+| [node-doctor.md](node-doctor.md) | Read-only node health and drift diagnostics |
 
 ## Common tasks
 
@@ -19,15 +20,16 @@ Documentation for the Valley of 0G Testnet toolkit (Galileo chain).
 | Deploy a storage node | [storage-node.md](storage-node.md) |
 | Set up Storage KV | [storage-kv.md](storage-kv.md) |
 | Apply a snapshot | [snapshots.md](snapshots.md) |
+| Inspect node health without changing it | [node-doctor.md](node-doctor.md) |
 
 ## Current Versions
 
 | Component | Version |
 |-----------|---------|
-| Validator Node | v3.0.3 |
+| Validator Node | v3.0.4 (managed) |
 | Storage Node | v1.1.0 |
 | Storage KV | v1.4.0 |
-| Chain | 0gchain-16601 (Galileo) |
+| EVM Chain ID | 16602 (Galileo) |
 
 ## Support
 

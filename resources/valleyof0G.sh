@@ -1,5 +1,91 @@
 #!/bin/bash
 
+# Runtime security boundary: executable helpers are loaded from an immutable
+# repository commit when this entrypoint is executed remotely. Local checkouts
+# always prefer sibling files so development/testing remains offline-friendly.
+readonly VALLEY_RUNTIME_REF="fa78c96de0fe669e79e4e54d3864fd83c2d63f26"
+readonly VALLEY_REPOSITORY="hubofvalley/Valley-of-0G-Testnet"
+readonly VALLEY_EXPECTED_EVM_CHAIN_ID="16602"
+
+validate_runtime_ref() {
+    [[ "$VALLEY_RUNTIME_REF" =~ ^[0-9a-f]{40}$ ]]
+}
+
+run_repository_script() {
+    local relative_path=$1
+    shift
+    local script_dir local_script manifest tmpdir remote_script remote_manifest rc
+
+    script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)
+    local_script="${script_dir}/${relative_path#resources/}"
+    manifest="${script_dir}/../VERSIONS.json"
+    if [ -n "$script_dir" ] && [ -f "$local_script" ]; then
+        VALLEY_MANIFEST_PATH="$manifest" VALLEY_RUNTIME_REF="$VALLEY_RUNTIME_REF" bash "$local_script" "$@"
+        return $?
+    fi
+
+    if ! validate_runtime_ref; then
+        echo "Runtime helper blocked: VALLEY_RUNTIME_REF must be a full 40-character Git commit SHA." >&2
+        return 2
+    fi
+    if ! command -v curl >/dev/null 2>&1; then
+        echo "Runtime helper blocked: curl is required." >&2
+        return 2
+    fi
+
+    tmpdir=$(mktemp -d)
+    remote_script="$tmpdir/helper.sh"
+    remote_manifest="$tmpdir/VERSIONS.json"
+    if ! curl -fsSL "https://raw.githubusercontent.com/${VALLEY_REPOSITORY}/${VALLEY_RUNTIME_REF}/${relative_path}" -o "$remote_script"; then
+        rm -rf "$tmpdir"
+        echo "Failed to download $relative_path from pinned commit $VALLEY_RUNTIME_REF. Nothing was executed." >&2
+        return 2
+    fi
+    if ! curl -fsSL "https://raw.githubusercontent.com/${VALLEY_REPOSITORY}/${VALLEY_RUNTIME_REF}/VERSIONS.json" -o "$remote_manifest"; then
+        rm -rf "$tmpdir"
+        echo "Failed to download VERSIONS.json from pinned commit $VALLEY_RUNTIME_REF. Nothing was executed." >&2
+        return 2
+    fi
+    chmod +x "$remote_script"
+    VALLEY_MANIFEST_PATH="$remote_manifest" VALLEY_RUNTIME_REF="$VALLEY_RUNTIME_REF" bash "$remote_script" "$@"
+    rc=$?
+    rm -rf "$tmpdir"
+    return "$rc"
+}
+
+if [ "${1:-}" = "doctor" ] || [ "${1:-}" = "node-doctor" ]; then
+    shift
+    run_repository_script resources/vo0g_node_doctor.sh "$@"
+    exit $?
+fi
+
+vo0g_rpc_chain_id() {
+    local endpoint=$1 result
+    command -v curl >/dev/null 2>&1 || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+    result=$(curl -fsS --connect-timeout 4 --max-time 8 \
+        -H 'Content-Type: application/json' \
+        -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
+        "$endpoint" 2>/dev/null | jq -r '.result // empty' 2>/dev/null || true)
+    if [[ "$result" =~ ^0x[0-9a-fA-F]+$ ]]; then
+        printf '%d\n' "$((16#${result#0x}))"
+    elif [[ "$result" =~ ^[0-9]+$ ]]; then
+        printf '%s\n' "$result"
+    else
+        return 1
+    fi
+}
+
+vo0g_require_evm_chain() {
+    local endpoint=$1 chain_id
+    chain_id=$(vo0g_rpc_chain_id "$endpoint" || true)
+    if [ "$chain_id" != "$VALLEY_EXPECTED_EVM_CHAIN_ID" ]; then
+        echo -e "${RED:-}RPC rejected: ${endpoint} reports chain ${chain_id:-unavailable}; expected ${VALLEY_EXPECTED_EVM_CHAIN_ID}.${RESET:-}" >&2
+        return 1
+    fi
+    return 0
+}
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -55,10 +141,10 @@ ${YELLOW}| Category  | Requirements                   |
 | Storage   | 1+ TB NVMe SSD                 |
 | Bandwidth | 100 MBps for Download / Upload |${RESET}
 
-validator node current binaries version: ${CYAN}v3.0.3${RESET}
+validator node managed binary version: ${CYAN}v3.0.4${RESET}
 - consensus client service file name: ${CYAN}\${OG_SERVICE_NAME}.service${RESET}
 - 0g-geth service file name: ${CYAN}\${OG_GETH_SERVICE_NAME}.service${RESET}
-current chain : ${CYAN}0gchain-16601 (Galileo Testnet)${RESET}
+current EVM chain ID: ${CYAN}16602 (Galileo Testnet)${RESET}
 
 ------------------------------------------------------------------
 
@@ -198,7 +284,7 @@ function deploy_validator_node() {
     echo -e "${YELLOW}This may take 1-5 minutes. Please don't interrupt the process.${RESET}"
     sleep 2
 
-    bash <(curl -s https://raw.githubusercontent.com/hubofvalley/Valley-of-0G-Testnet/main/resources/0g_validator_node_galileo_install.sh)
+    run_repository_script resources/0g_validator_node_galileo_install.sh
     menu
 }
 
@@ -210,7 +296,7 @@ function manage_validator_node() {
 
     case $choice in
         1)
-            bash <(curl -s https://raw.githubusercontent.com/hubofvalley/Valley-of-0G-Testnet/main/resources/0g_validator_node_update_manual.sh)
+            run_repository_script resources/0g_validator_node_update_manual.sh
             menu
             ;;
         2)
@@ -226,17 +312,24 @@ function manage_validator_node() {
 
 
 function apply_snapshot() {
-     bash <(curl -s https://raw.githubusercontent.com/hubofvalley/Valley-of-0G-Testnet/main/resources/apply_snapshot.sh)
+     run_repository_script resources/apply_snapshot.sh
      menu
 }
 
 function install_0gchain_app() {
     cd $HOME || return
-    echo "Downloading and installing 0gchaind v3.0.3..."
+    local archive="galileo-v3.0.4.tar.gz"
+    local expected_sha256="62455814f2f2b3ca29e97807ebf87a26ade56a7f833b1932c06e39059b915025"
+    echo "Downloading and installing managed 0gchaind v3.0.4..."
     
     # Download and extract package
-    wget -q https://github.com/0glabs/0gchain-ng/releases/download/v3.0.3/galileo-v3.0.3.tar.gz -O galileo-v3.0.3.tar.gz
-    tar -xzf galileo-v3.0.3.tar.gz -C $HOME
+    wget -q "https://github.com/0gfoundation/0gchain-NG/releases/download/v3.0.4/${archive}" -O "$archive"
+    echo "${expected_sha256}  ${archive}" | sha256sum --check || {
+        echo "Checksum verification failed. Nothing was installed." >&2
+        rm -f "$archive"
+        return 1
+    }
+    tar -xzf "$archive" -C $HOME
     
     # Ensure target directories exist
     mkdir -p $HOME/go/bin
@@ -246,14 +339,14 @@ function install_0gchain_app() {
         # Copy to standard location
         cp "$HOME/galileo/bin/0gchaind" "$HOME/go/bin/0gchaind"
         sudo chmod +x "$HOME/go/bin/0gchaind"
-        echo "0gchaind v3.0.3 installed successfully to:"
+        echo "0gchaind v3.0.4 installed successfully to:"
         echo "- $HOME/go/bin/0gchaind"
     else
         echo "Error: 0gchaind binary not found in extracted package!"
     fi
     
     # Cleanup
-    rm -f galileo-v3.0.3.tar.gz
+    rm -f "$archive"
     menu
 }
 
@@ -304,14 +397,19 @@ function query_balance() {
             ;;
     esac
 
-    echo -e "${CYAN}Fetching balance from testnet RPC for $evm_address...${RESET}"
-    curl -s --insecure -X POST https://lightnode-json-rpc-0g.grandvalleys.com \
+    local balance_rpc="https://evmrpc-testnet.0g.ai"
+    if ! vo0g_require_evm_chain "$balance_rpc"; then
+        echo -e "${RED}Balance query blocked because the RPC chain could not be verified.${RESET}"
+        return 1
+    fi
+    echo -e "${CYAN}Fetching balance from verified Galileo RPC for $evm_address...${RESET}"
+    curl -fsS -X POST "$balance_rpc" \
         -H "Content-Type: application/json" \
         -d "{
             \"jsonrpc\":\"2.0\",
             \"method\":\"eth_getBalance\",
             \"params\": [\"$evm_address\", \"latest\"],
-            \"id\":16601
+            \"id\":16602
         }" | jq -r '.result' | awk '{printf "Balance of %s: %0.18f A0GI\n", "'"$evm_address"'", strtonum($1)/1e18}'
 
     echo -e "\n${YELLOW}Press Enter to go back to main menu...${RESET}"
@@ -477,7 +575,7 @@ function delete_validator_node() {
     sudo rm -rf /etc/systemd/system/${OG_SERVICE_NAME}.service /etc/systemd/system/${OG_GETH_SERVICE_NAME}.service
     sudo rm -r $HOME/galileo
     sudo rm -r $HOME/.0gchaind
-    sudo rm -r $HOME/galileo-v3.0.3
+    sudo rm -rf $HOME/galileo-v3.0.4
     sed -i "/OG_/d" $HOME/.bash_profile
     echo "Validator node deleted successfully."
     menu
@@ -580,12 +678,12 @@ function add_peers() {
 
 # Storage Node Functions
 function deploy_storage_node() {
-    bash <(curl -s https://raw.githubusercontent.com/hubofvalley/Valley-of-0G-Testnet/main/resources/0g_storage_node_install.sh)
+    run_repository_script resources/0g_storage_node_install.sh
     menu
 }
 
 function update_storage_node() {
-    bash <(curl -s https://raw.githubusercontent.com/hubofvalley/Valley-of-0G-Testnet/main/resources/0g_storage_node_update.sh)
+    run_repository_script resources/0g_storage_node_update.sh
     menu
 }
 
@@ -614,7 +712,7 @@ function apply_storage_node_snapshot() {
         clear
         echo -e "\033[0;36m▓▒░ Storage Node Contract Type\033[0m"
         echo -e "\033[0;32m1) Standard Contract\033[0m   (Not Available)"
-        echo -e "\033[0;33m2) Turbo Contract\033[0m     (Available)"
+        echo -e "\033[0;33m2) Turbo Contract\033[0m     (Disabled pending Galileo verification)"
         echo -e "\033[0;31m3) Cancel & Return\033[0m"
         
         read -p $'\033[0;34mSelect option [1-3]: \033[0m' contract_choice
@@ -636,7 +734,15 @@ function apply_storage_node_snapshot() {
 
                 echo -e "\n\033[0;32mInitializing Standard Contract snapshot...\033[0m"
                 echo -e "\033[0;33mThis may take several minutes...\033[0m"
-                bash <(curl -s https://raw.githubusercontent.com/hubofvalley/Valley-of-0G-Testnet/main/resources/0g_turbo_zgs_node_snapshot.sh)
+                if run_repository_script resources/0g_turbo_zgs_node_snapshot.sh; then
+                    :
+                else
+                    snapshot_rc=$?
+                    echo -e "\n\033[0;31mSnapshot was not applied (exit ${snapshot_rc}). Review the message above.\033[0m"
+                    sleep 2
+                    menu
+                    return
+                fi
 
                 echo -e "\n\033[0;32m▓▒░ Snapshot Applied Successfully ░▒▓\033[0m"
                 echo -e "\033[0;33mYour node is now syncing data_db - this will take several hours"
@@ -671,7 +777,7 @@ function delete_storage_node() {
 }
 
 function change_storage_node() {
-    bash <(curl -s https://raw.githubusercontent.com/hubofvalley/Valley-of-0G-Testnet/main/resources/0g_storage_node_change.sh)
+    run_repository_script resources/0g_storage_node_change.sh
     menu
 }
 
@@ -792,7 +898,7 @@ function restart_storage_node() {
 
 # Storage KV Functions
 function deploy_storage_kv() {
-    bash <(curl -s https://raw.githubusercontent.com/hubofvalley/Valley-of-0G-Testnet/main/resources/0g_storage_kv_install.sh)
+    run_repository_script resources/0g_storage_kv_install.sh
     menu
 }
 
@@ -811,7 +917,7 @@ function delete_storage_kv() {
 }
 
 function update_storage_kv() {
-    bash <(curl -s https://raw.githubusercontent.com/hubofvalley/Valley-of-0G-Testnet/main/resources/0g_storage_kv_update.sh)
+    run_repository_script resources/0g_storage_kv_update.sh
     menu
 }
 
@@ -859,13 +965,13 @@ function show_guidelines() {
 
     echo -e "${GREEN}5. Additional Tips${RESET}"
     echo "   - Always backup your wallets and important data before performing operations like deleting nodes."
-    echo "   - Regularly update your nodes to the latest version (currently v3.0.3) to ensure compatibility and security."
+    echo "   - Use Valley's managed validator target (currently v3.0.4); review newer upstream releases before upgrading."
 
     echo -e "${GREEN}6. Option Descriptions and Guides${RESET}"
     echo -e "${GREEN}Validator Node Options:${RESET}"
-    echo "   a. Deploy/re-Deploy Validator Node: Sets up a new validator node or redeploys an existing one (v3.0.3)."
+    echo "   a. Deploy/re-Deploy Validator Node: Sets up a new validator node or redeploys an existing one (managed v3.0.4)."
     echo "      - Guide: This will install all necessary components. Ensure your system meets requirements."
-    echo "   b. Manage Validator Node: Update validator node version (v3.0.3) or return to menu."
+    echo "   b. Manage Validator Node: Update validator node version using the reviewed managed flow or return to menu."
     echo "   c. Add Peers: Manually add peers or use Grand Valley's peers."
     echo "      - Guide: Improves node connectivity and network participation."
     echo "   d. Show Node Status: Displays your validator's current status and health."
@@ -899,7 +1005,7 @@ function show_guidelines() {
     echo "   i. Delete Storage KV: Removes KV node."
 
     echo -e "${GREEN}Utilities:${RESET}"
-    echo "   5. Install 0gchain App: Installs CLI (v3.0.3) for transactions without running a node."
+    echo "   5. Install 0gchain App: Installs the managed CLI (v3.0.4) for transactions without running a node."
     echo "   6. Show Endpoints: Displays Grand Valley's public endpoints."
     echo "   7. Show Guidelines: Displays this help information."
 
@@ -952,7 +1058,7 @@ function menu() {
     echo "    g. Delete Validator Node (BACKUP YOUR SEEDS PHRASE/EVM-PRIVATE KEY AND priv_validator_key.json BEFORE YOU DO THIS)"
     echo "    h. Delete Storage Node"
     echo "    i. Delete Storage KV"
-    echo -e "${GREEN}5. Install the 0gchain App (v3.0.3) only to execute transactions without running a node${RESET}"
+    echo -e "${GREEN}5. Install the 0gchain App (managed v3.0.4) only to execute transactions without running a node${RESET}"
     echo -e "${GREEN}6. Show Grand Valley's Endpoints${RESET}"
     echo -e "${YELLOW}7. Show Guidelines${RESET}"
     echo -e "${RED}8. Exit${RESET}"

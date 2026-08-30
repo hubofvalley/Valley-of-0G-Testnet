@@ -15,7 +15,7 @@ Deploy and manage a 0G storage node on Galileo testnet.
 
 1. Launch Valley of 0G:
    ```bash
-   bash <(curl -s https://raw.githubusercontent.com/hubofvalley/Testnet-Guides/main/0g%20\(zero-gravity\)/resources/valleyof0G.sh)
+   bash <(curl -fsSL https://raw.githubusercontent.com/hubofvalley/Valley-of-0G-Testnet/main/resources/valleyof0G.sh)
    ```
 2. Select **"Storage Node"** → **"Deploy Storage Node"**
 3. Follow the interactive prompts

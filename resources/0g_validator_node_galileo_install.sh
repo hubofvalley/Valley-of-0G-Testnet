@@ -12,7 +12,12 @@ LOGO="
 echo "$LOGO"
 
 # Colours
-GREEN="\e[32m"; YELLOW="\e[33m"; CYAN="\e[36m"; RESET="\e[0m"
+RED="\e[31m"; GREEN="\e[32m"; YELLOW="\e[33m"; CYAN="\e[36m"; RESET="\e[0m"
+
+readonly GALILEO_VERSION="v3.0.4"
+readonly GALILEO_ARCHIVE="galileo-v3.0.4.tar.gz"
+readonly GALILEO_SHA256="62455814f2f2b3ca29e97807ebf87a26ade56a7f833b1932c06e39059b915025"
+readonly GALILEO_URL="https://github.com/0gfoundation/0gchain-NG/releases/download/v3.0.4/galileo-v3.0.4.tar.gz"
 
 # ===== CHOOSE NODE TYPE =====
 while true; do
@@ -49,12 +54,12 @@ if [ "$NODE_TYPE" = "validator" ]; then
 fi
 
 # Service Name Configuration (for multi-instance support)
-if [ -z "$OG_SERVICE_NAME" ]; then
+if [ -z "${OG_SERVICE_NAME:-}" ]; then
     read -p "Enter Consensus Service Name (default '0gchaind'): " OG_SERVICE_NAME
     OG_SERVICE_NAME=${OG_SERVICE_NAME:-0gchaind}
 fi
 
-if [ -z "$OG_GETH_SERVICE_NAME" ]; then
+if [ -z "${OG_GETH_SERVICE_NAME:-}" ]; then
     read -p "Enter Geth Service Name (default '0g-geth'): " OG_GETH_SERVICE_NAME
     OG_GETH_SERVICE_NAME=${OG_GETH_SERVICE_NAME:-0g-geth}
 fi
@@ -75,6 +80,64 @@ echo "Using Service Names: ${OG_SERVICE_NAME} and ${OG_GETH_SERVICE_NAME}"
   echo 'export PATH=$PATH:$HOME/galileo/bin'
   } >> ~/.bash_profile
   source ~/.bash_profile
+
+# ==== PREPARE AND VERIFY RELEASE BEFORE DOWNTIME ====
+if ! command -v wget >/dev/null 2>&1; then
+    sudo apt update
+    sudo apt install -y wget
+fi
+command -v sha256sum >/dev/null 2>&1 || { echo "sha256sum is required." >&2; exit 1; }
+
+STAGE_DIR=$(mktemp -d)
+trap 'rm -rf "$STAGE_DIR"' EXIT
+STAGED_ARCHIVE="$STAGE_DIR/$GALILEO_ARCHIVE"
+echo "Downloading managed Galileo release $GALILEO_VERSION before touching the running node..."
+wget -q "$GALILEO_URL" -O "$STAGED_ARCHIVE"
+echo "$GALILEO_SHA256  $STAGED_ARCHIVE" | sha256sum --check || {
+    echo -e "${RED}Galileo release checksum verification failed. Nothing was changed.${RESET}" >&2
+    exit 1
+}
+
+service_belongs_to_current_instance() {
+    local service=$1 fragment unit_user unit_workdir current_user
+    fragment=$(systemctl show "$service" -p FragmentPath --value 2>/dev/null || true)
+    [ -n "$fragment" ] || return 0
+    [ -f "$fragment" ] || { echo "Cannot inspect existing $service service: $fragment" >&2; return 1; }
+    unit_user=$(sed -n 's/^User=//p' "$fragment" | tail -n 1)
+    unit_workdir=$(sed -n 's/^WorkingDirectory=//p' "$fragment" | tail -n 1)
+    current_user=$(id -un)
+    if [ "$unit_user" != "$current_user" ] || [ "$unit_workdir" != "$HOME/.0gchaind" ]; then
+        echo "Redeploy blocked: $service.service belongs to another instance." >&2
+        echo "Existing User=${unit_user:-unknown}, WorkingDirectory=${unit_workdir:-unknown}" >&2
+        return 1
+    fi
+}
+
+for candidate_service in 0gchaind "$OG_SERVICE_NAME" 0g-geth 0ggeth "$OG_GETH_SERVICE_NAME"; do
+    service_belongs_to_current_instance "$candidate_service" || exit 1
+done
+
+echo -e "${YELLOW}The managed release has been verified. This redeploy will replace existing Galileo node state.${RESET}"
+
+REDEPLOY_BACKUP_DIR="$HOME/valley-0g-testnet-redeploy-backups/$(date -u +%Y%m%dT%H%M%SZ)"
+OLD_CONS_HOME="$HOME/.0gchaind/0g-home/0gchaind-home"
+PRESERVE_VALIDATOR_IDENTITY=no
+if [ -f "$OLD_CONS_HOME/config/priv_validator_key.json" ]; then
+    mkdir -p "$REDEPLOY_BACKUP_DIR"
+    chmod 700 "$REDEPLOY_BACKUP_DIR"
+    cp "$OLD_CONS_HOME/config/priv_validator_key.json" "$REDEPLOY_BACKUP_DIR/priv_validator_key.json"
+    [ -f "$OLD_CONS_HOME/config/node_key.json" ] && cp "$OLD_CONS_HOME/config/node_key.json" "$REDEPLOY_BACKUP_DIR/node_key.json"
+    [ -f "$OLD_CONS_HOME/data/priv_validator_state.json" ] && cp "$OLD_CONS_HOME/data/priv_validator_state.json" "$REDEPLOY_BACKUP_DIR/priv_validator_state.json"
+    chmod 600 "$REDEPLOY_BACKUP_DIR"/*.json
+    PRESERVE_VALIDATOR_IDENTITY=yes
+    echo -e "${YELLOW}Existing consensus validator identity/state will be preserved from:${RESET} $REDEPLOY_BACKUP_DIR"
+fi
+
+read -r -p "Type REDEPLOY-GALILEO to continue: " REDEPLOY_CONFIRM
+if [ "$REDEPLOY_CONFIRM" != "REDEPLOY-GALILEO" ]; then
+    echo "Redeploy cancelled before any service or node data was changed."
+    exit 0
+fi
 
 # ==== CLEANUP EXISTING INSTALLATION ====
 echo -e "\n?? Cleaning up any existing 0G node installation..."
@@ -119,10 +182,8 @@ fi
 # ==== DOWNLOAD GALILEO v3.0.4 ====
 cd $HOME
 sudo rm -rf galileo
-wget -q https://github.com/0gfoundation/0gchain-NG/releases/download/v3.0.4/galileo-v3.0.4.tar.gz -O galileo-v3.0.4.tar.gz
-tar -xzvf galileo-v3.0.4.tar.gz
+tar -xzvf "$STAGED_ARCHIVE"
 mv galileo-v3.0.4 galileo
-sudo rm galileo-v3.0.4.tar.gz
 
 # ==== MAKE BINARIES EXECUTABLE ====
 sudo chmod +x $HOME/galileo/$NODE_TYPE/bin/geth
@@ -143,6 +204,14 @@ cp $HOME/.0gchaind/tmp/data/priv_validator_state.json $HOME/.0gchaind/0g-home/0g
 cp $HOME/.0gchaind/tmp/config/node_key.json $HOME/.0gchaind/0g-home/0gchaind-home/config/
 cp $HOME/.0gchaind/tmp/config/priv_validator_key.json $HOME/.0gchaind/0g-home/0gchaind-home/config/
 
+if [ "$PRESERVE_VALIDATOR_IDENTITY" = "yes" ]; then
+  cp "$REDEPLOY_BACKUP_DIR/priv_validator_key.json" "$HOME/.0gchaind/0g-home/0gchaind-home/config/priv_validator_key.json"
+  [ -f "$REDEPLOY_BACKUP_DIR/node_key.json" ] && cp "$REDEPLOY_BACKUP_DIR/node_key.json" "$HOME/.0gchaind/0g-home/0gchaind-home/config/node_key.json"
+  [ -f "$REDEPLOY_BACKUP_DIR/priv_validator_state.json" ] && cp "$REDEPLOY_BACKUP_DIR/priv_validator_state.json" "$HOME/.0gchaind/0g-home/0gchaind-home/data/priv_validator_state.json"
+  chmod 600 "$HOME/.0gchaind/0g-home/0gchaind-home/config/priv_validator_key.json"
+  echo -e "${GREEN}Existing consensus validator identity/state restored after fresh init.${RESET}"
+fi
+
 # ==== Generate JWT Authentication Token ====
 0gchaind jwt generate --home $HOME/.0gchaind/0g-home/0gchaind-home --chaincfg.chain-spec testnet
 cp -f $HOME/.0gchaind/0g-home/0gchaind-home/config/jwt.hex $HOME/.0gchaind/jwt.hex
@@ -157,8 +226,8 @@ sed -i "s/^moniker *=.*/moniker = \"$MONIKER\"/" $CONFIG/config.toml
 sed -i "s|laddr = \"tcp://0.0.0.0:26656\"|laddr = \"tcp://0.0.0.0:${OG_PORT}656\"|" $CONFIG/config.toml
 sed -i "s|laddr = \"tcp://127.0.0.1:26657\"|laddr = \"tcp://127.0.0.1:${OG_PORT}657\"|" $CONFIG/config.toml
 sed -i "s|^proxy_app = .*|proxy_app = \"tcp://127.0.0.1:${OG_PORT}658\"|" $CONFIG/config.toml
-sed -i "s|^pprof_laddr = .*|pprof_laddr = \"0.0.0.0:${OG_PORT}060\"|" $CONFIG/config.toml
-sed -i "s|prometheus_listen_addr = \".*\"|prometheus_listen_addr = \"0.0.0.0:${OG_PORT}660\"|" $CONFIG/config.toml
+sed -i "s|^pprof_laddr = .*|pprof_laddr = \"127.0.0.1:${OG_PORT}060\"|" $CONFIG/config.toml
+sed -i "s|prometheus_listen_addr = \".*\"|prometheus_listen_addr = \"127.0.0.1:${OG_PORT}660\"|" $CONFIG/config.toml
 
 # indexer toggle
 if [ "$ENABLE_INDEXER" = "yes" ]; then
@@ -184,6 +253,29 @@ sed -i "s/ListenAddr = .*/ListenAddr = \":${OG_PORT}303\"/" $GCONFIG
 sed -i "s/DiscAddr = .*/DiscAddr = \":${OG_PORT}303\"/" $GCONFIG
 sed -i "s/^# *Port = .*/# Port = ${OG_PORT}901/" $GCONFIG
 sed -i "s/^# *InfluxDBEndpoint = .*/# InfluxDBEndpoint = \"http:\/\/localhost:${OG_PORT}086\"/" $GCONFIG
+
+# v3.0.4 testnet release requirement: staking activation override under [Eth].
+if grep -Eq '^[[:space:]]*OverrideStakingActivation[[:space:]]*=' "$GCONFIG"; then
+  sed -i -E 's/^[[:space:]]*OverrideStakingActivation[[:space:]]*=.*/OverrideStakingActivation = 1767830400/' "$GCONFIG"
+else
+  GCONFIG_TMP=$(mktemp)
+  if ! awk '
+    BEGIN { inserted=0 }
+    /^\[[Ee][Tt][Hh]\][[:space:]]*$/ && inserted==0 {
+      print
+      print "OverrideStakingActivation = 1767830400"
+      inserted=1
+      next
+    }
+    { print }
+    END { if (inserted==0) exit 42 }
+  ' "$GCONFIG" > "$GCONFIG_TMP"; then
+    rm -f "$GCONFIG_TMP"
+    echo -e "${RED}Could not locate the [Eth] section required for OverrideStakingActivation.${RESET}" >&2
+    exit 1
+  fi
+  mv "$GCONFIG_TMP" "$GCONFIG"
+fi
 
 # ==== SYSTEMD SERVICES ====
 # Consensus service file (branch on NODE_TYPE)

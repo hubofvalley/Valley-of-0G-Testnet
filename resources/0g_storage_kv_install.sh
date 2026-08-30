@@ -1,10 +1,39 @@
 #!/bin/bash
 
-# Function to query the latest block number from a JSON-RPC endpoint
+readonly EXPECTED_EVM_CHAIN_ID="16602"
+
+rpc_result() {
+    local endpoint=$1 method=$2
+    curl -fsS --connect-timeout 4 --max-time 8 -X POST "$endpoint" \
+        -H "Content-Type: application/json" \
+        -d "{\"jsonrpc\":\"2.0\",\"method\":\"${method}\",\"params\":[],\"id\":1}" 2>/dev/null |
+        jq -r '.result // empty' 2>/dev/null || true
+}
+
+hex_to_dec() {
+    local value=$1
+    if [[ "$value" =~ ^0x[0-9a-fA-F]+$ ]]; then printf '%d\n' "$((16#${value#0x}))";
+    elif [[ "$value" =~ ^[0-9]+$ ]]; then printf '%s\n' "$value"; fi
+}
+
 query_block_number() {
-    local endpoint=$1
-    local block_number=$(curl -s -X POST $endpoint -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' | jq -r '.result' | xargs printf "%d\n")
-    echo $block_number
+    local endpoint=$1 chain_raw chain_id block_raw block_number
+    chain_raw=$(rpc_result "$endpoint" eth_chainId); chain_id=$(hex_to_dec "$chain_raw")
+    [ "$chain_id" = "$EXPECTED_EVM_CHAIN_ID" ] || {
+        printf 'REJECTED chain=%s expected=%s\n' "${chain_id:-unavailable}" "$EXPECTED_EVM_CHAIN_ID"
+        return 1
+    }
+    block_raw=$(rpc_result "$endpoint" eth_blockNumber); block_number=$(hex_to_dec "$block_raw")
+    printf '%s\n' "${block_number:-unavailable}"
+}
+
+require_rpc_chain() {
+    local endpoint=$1 chain_raw chain_id
+    chain_raw=$(rpc_result "$endpoint" eth_chainId); chain_id=$(hex_to_dec "$chain_raw")
+    [ "$chain_id" = "$EXPECTED_EVM_CHAIN_ID" ] || {
+        echo "RPC rejected: $endpoint reports chain ${chain_id:-unavailable}; expected $EXPECTED_EVM_CHAIN_ID." >&2
+        return 1
+    }
 }
 
 # Function to prompt user to choose JSON-RPC endpoint
@@ -16,7 +45,8 @@ choose_json_rpc_endpoint() {
 
     if [ "$JSON_RPC_CHOICE" == "1" ]; then
         read -p "Enter your JSON-RPC endpoint: " BLOCKCHAIN_RPC_ENDPOINT
-        BLOCK_NUMBER=$(query_block_number $BLOCKCHAIN_RPC_ENDPOINT)
+        require_rpc_chain "$BLOCKCHAIN_RPC_ENDPOINT" || { choose_json_rpc_endpoint; return; }
+        BLOCK_NUMBER=$(query_block_number "$BLOCKCHAIN_RPC_ENDPOINT")
         echo "Latest block number for $BLOCKCHAIN_RPC_ENDPOINT: $BLOCK_NUMBER"
         read -p "Do you want to continue with this RPC endpoint? (yes/no): " CONTINUE_CHOICE
         if [ "$CONTINUE_CHOICE" != "yes" ]; then
@@ -26,27 +56,14 @@ choose_json_rpc_endpoint() {
         echo "Available public JSON-RPC endpoints:"
         echo "1. https://lightnode-json-rpc-0g.grandvalleys.com [$(query_block_number https://lightnode-json-rpc-0g.grandvalleys.com)]"
         echo "2. https://evmrpc-testnet.0g.ai [$(query_block_number https://evmrpc-testnet.0g.ai)]"
-        echo "3. https://rpc.ankr.com/0g_newton [$(query_block_number https://rpc.ankr.com/0g_newton)]"
-        echo "4. https://16600.rpc.thirdweb.com [$(query_block_number https://16600.rpc.thirdweb.com)]"
-        echo "5. https://0g-json-rpc-public.originstake.com [$(query_block_number https://0g-json-rpc-public.originstake.com)]"
-        echo "6. https://0g-rpc-evm01.validatorvn.com [$(query_block_number https://0g-rpc-evm01.validatorvn.com)]"
-        echo "7. https://og-testnet-jsonrpc.itrocket.net:443 [$(query_block_number https://og-testnet-jsonrpc.itrocket.net:443)]"
-        echo "8. https://0g-evmrpc-zstake.xyz [$(query_block_number https://0g-evmrpc-zstake.xyz)]"
-        echo "9. https://zerog-testnet-json-rpc.contributiondao.com [$(query_block_number https://zerog-testnet-json-rpc.contributiondao.com)]"
         read -p "Enter the number of your chosen public JSON-RPC endpoint: " PUBLIC_RPC_CHOICE
 
         case $PUBLIC_RPC_CHOICE in
             1) BLOCKCHAIN_RPC_ENDPOINT="https://lightnode-json-rpc-0g.grandvalleys.com";;
             2) BLOCKCHAIN_RPC_ENDPOINT="https://evmrpc-testnet.0g.ai";;
-            3) BLOCKCHAIN_RPC_ENDPOINT="https://rpc.ankr.com/0g_newton";;
-            4) BLOCKCHAIN_RPC_ENDPOINT="https://16600.rpc.thirdweb.com";;
-            5) BLOCKCHAIN_RPC_ENDPOINT="https://0g-json-rpc-public.originstake.com";;
-            6) BLOCKCHAIN_RPC_ENDPOINT="https://0g-rpc-evm01.validatorvn.com";;
-            7) BLOCKCHAIN_RPC_ENDPOINT="https://og-testnet-jsonrpc.itrocket.net:443";;
-            8) BLOCKCHAIN_RPC_ENDPOINT="https://0g-evmrpc-zstake.xyz";;
-            9) BLOCKCHAIN_RPC_ENDPOINT="https://zerog-testnet-json-rpc.contributiondao.com";;
             *) echo "Invalid choice. Exiting."; exit 1;;
         esac
+        require_rpc_chain "$BLOCKCHAIN_RPC_ENDPOINT" || { echo "Selected endpoint is unavailable or wrong-chain." >&2; exit 1; }
     else
         echo "Invalid choice. Exiting."; exit 1
     fi

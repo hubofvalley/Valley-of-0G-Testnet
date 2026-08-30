@@ -16,7 +16,7 @@ Deploy and manage a 0G validator node on Galileo testnet.
 
 1. Launch Valley of 0G:
    ```bash
-   bash <(curl -s https://raw.githubusercontent.com/hubofvalley/Testnet-Guides/main/0g%20\(zero-gravity\)/resources/valleyof0G.sh)
+   bash <(curl -fsSL https://raw.githubusercontent.com/hubofvalley/Valley-of-0G-Testnet/main/resources/valleyof0G.sh)
    ```
 2. Select **"Validator Node"** → **"Deploy Validator Node"**
 3. Follow the interactive prompts
@@ -25,7 +25,7 @@ Deploy and manage a 0G validator node on Galileo testnet.
 
 | Component | Details |
 |-----------|---------|
-| **0gchaind** | Consensus client (v3.0.3) |
+| **0gchaind** | Consensus client (managed v3.0.4) |
 | **0g-geth** | Execution client |
 | **0gchaind.service** | Systemd service for consensus |
 | **0g-geth.service** | Systemd service for execution |
