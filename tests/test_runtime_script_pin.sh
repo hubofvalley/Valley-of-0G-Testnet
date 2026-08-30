@@ -8,6 +8,9 @@ fail() { echo "RUNTIME_SCRIPT_PIN_TEST_FAIL: $*" >&2; exit 1; }
 
 runtime_ref=$(sed -n 's/^readonly VALLEY_RUNTIME_REF="\([0-9a-f]\{40\}\)"$/\1/p' "$MAIN")
 [ -n "$runtime_ref" ] || fail "VALLEY_RUNTIME_REF must be a full 40-character Git commit SHA"
+git cat-file -e "$runtime_ref^{commit}" 2>/dev/null || fail "pinned runtime commit is not present in the local checkout"
+git cat-file -e "$runtime_ref:VERSIONS.json" 2>/dev/null || fail "pinned runtime commit does not contain VERSIONS.json"
+git cat-file -e "$runtime_ref:resources/vo0g_node_doctor.sh" 2>/dev/null || fail "pinned runtime commit does not contain Node Doctor"
 grep -Fq 'run_repository_script()' "$MAIN" || fail "immutable helper dispatcher is missing"
 grep -Fq '${VALLEY_REPOSITORY}/${VALLEY_RUNTIME_REF}/${relative_path}' "$MAIN" || fail "remote helper fetch is not pinned"
 
@@ -28,6 +31,7 @@ expected_helpers=(
 )
 for helper in "${expected_helpers[@]}"; do
     grep -Fq "run_repository_script $helper" "$MAIN" || fail "menu helper is not dispatched immutably: $helper"
+    git cat-file -e "$runtime_ref:$helper" 2>/dev/null || fail "pinned runtime commit does not contain helper: $helper"
 done
 
 echo "RUNTIME_SCRIPT_PIN_TEST_OK"

@@ -3,7 +3,7 @@
 # Runtime security boundary: executable helpers are loaded from an immutable
 # repository commit when this entrypoint is executed remotely. Local checkouts
 # always prefer sibling files so development/testing remains offline-friendly.
-readonly VALLEY_RUNTIME_REF="fa78c96de0fe669e79e4e54d3864fd83c2d63f26"
+readonly VALLEY_RUNTIME_REF="6a84d2b39804b3fbe1641e90a4eb3ce4ad0da8ad"
 readonly VALLEY_REPOSITORY="hubofvalley/Valley-of-0G-Testnet"
 readonly VALLEY_EXPECTED_EVM_CHAIN_ID="16602"
 
