@@ -94,8 +94,19 @@ CYAN='\033[0;36m'
 YELLOW='\033[0;33m'
 ORANGE='\033[38;5;214m'
 RESET='\033[0m'
-# Service Name Detection - Ask Once, Remember Forever
-source $HOME/.bash_profile 2>/dev/null
+# Service/client detection - preserve existing Geth installs, prefer Reth only
+# for a host with no execution client configured yet.
+source "$HOME/.bash_profile" 2>/dev/null || true
+
+if [ -z "${EXEC_CLIENT:-}" ]; then
+    if [ -x "$HOME/go/bin/0g-reth" ] || systemctl cat 0g-reth >/dev/null 2>&1; then
+        EXEC_CLIENT=reth
+    elif [ -x "$HOME/go/bin/0g-geth" ] || systemctl cat 0g-geth >/dev/null 2>&1; then
+        EXEC_CLIENT=geth
+    else
+        EXEC_CLIENT=reth
+    fi
+fi
 
 if [ -z "${OG_SERVICE_NAME:-}" ]; then
     echo -e "${YELLOW}Service name configuration not found.${RESET}"
@@ -105,11 +116,30 @@ if [ -z "${OG_SERVICE_NAME:-}" ]; then
     export OG_SERVICE_NAME
 fi
 
-if [ -z "${OG_GETH_SERVICE_NAME:-}" ]; then
-    read -p "Enter Geth Service Name (default '0g-geth'): " INPUT_GETH
-    OG_GETH_SERVICE_NAME=${INPUT_GETH:-0g-geth}
-    echo "export OG_GETH_SERVICE_NAME=\"$OG_GETH_SERVICE_NAME\"" >> $HOME/.bash_profile
-    export OG_GETH_SERVICE_NAME
+case "$EXEC_CLIENT" in
+    geth)
+        if [ -z "${OG_GETH_SERVICE_NAME:-}" ]; then
+            read -r -p "Enter Geth Service Name (default '0g-geth'): " INPUT_GETH
+            OG_GETH_SERVICE_NAME=${INPUT_GETH:-0g-geth}
+        fi
+        EL_SERVICE_NAME=$OG_GETH_SERVICE_NAME
+        ;;
+    reth)
+        if [ -z "${OG_RETH_SERVICE_NAME:-}" ]; then
+            read -r -p "Enter Reth Service Name (default '0g-reth'): " INPUT_RETH
+            OG_RETH_SERVICE_NAME=${INPUT_RETH:-0g-reth}
+        fi
+        EL_SERVICE_NAME=$OG_RETH_SERVICE_NAME
+        ;;
+    *)
+        echo "Unsupported EXEC_CLIENT=$EXEC_CLIENT; expected geth or reth." >&2
+        exit 1
+        ;;
+esac
+
+if ! [[ "$OG_SERVICE_NAME" =~ ^[A-Za-z0-9_.@-]+$ && "$EL_SERVICE_NAME" =~ ^[A-Za-z0-9_.@-]+$ ]]; then
+    echo "Invalid systemd service name in profile/input." >&2
+    exit 1
 fi
 
 LOGO="
@@ -141,9 +171,10 @@ ${YELLOW}| Category  | Requirements                   |
 | Storage   | 1+ TB NVMe SSD                 |
 | Bandwidth | 100 MBps for Download / Upload |${RESET}
 
-validator node managed binary version: ${CYAN}v3.0.4${RESET}
-- consensus client service file name: ${CYAN}\${OG_SERVICE_NAME}.service${RESET}
-- 0g-geth service file name: ${CYAN}\${OG_GETH_SERVICE_NAME}.service${RESET}
+validator node managed binary version: ${CYAN}v3.0.8${RESET}
+- consensus client service file name: ${CYAN}${OG_SERVICE_NAME}.service${RESET}
+- execution client: ${CYAN}${EXEC_CLIENT}${RESET} (${CYAN}${EL_SERVICE_NAME}.service${RESET})
+current consensus network: ${CYAN}0G-testnet-galileo${RESET}
 current EVM chain ID: ${CYAN}16602 (Galileo Testnet)${RESET}
 
 ------------------------------------------------------------------
@@ -195,12 +226,10 @@ ${GREEN}Contact${RESET}
 "
 
 ENDPOINTS="${GREEN}
-Grand Valley 0G public endpoints:${RESET}
-- cosmos-rpc: ${BLUE}https://lightnode-rpc-0g.grandvalleys.com${RESET}
-- evm-rpc: ${BLUE}https://lightnode-json-rpc-0g.grandvalleys.com${RESET}
-- cosmos rest-api: ${BLUE}https://lightnode-api-0g.grandvalleys.com${RESET}
-- peer: ${BLUE}a97c8615903e795135066842e5739e30d64e2342@peer-0g.grandvalleys.com:28656${RESET}
-- Grand Valley Explorer: ${BLUE}https://explorer.grandvalleys.com${RESET}
+Galileo endpoint status:${RESET}
+- official EVM RPC: ${BLUE}https://evmrpc-testnet.0g.ai${RESET} (managed network-identity reference; chain ID 16602)
+- Grand Valley legacy Testnet RPC/REST endpoints: ${YELLOW}needs_live_repair; not used as a managed default${RESET}
+- Grand Valley legacy peer helper: ${YELLOW}disabled until live endpoint verification is restored${RESET}
 
 ${GREEN}Connect with Zero Gravity (0G):${RESET}
 - Official Website: ${BLUE}https://0g.ai/${RESET}
@@ -210,7 +239,7 @@ ${GREEN}Connect with Zero Gravity (0G):${RESET}
 ${GREEN}Connect with Grand Valley:${RESET}
 - X: ${BLUE}https://x.com/bacvalley${RESET}
 - GitHub: ${BLUE}https://github.com/hubofvalley${RESET}
-- 0G Testnet Guide on GitHub by Grand Valley: ${BLUE}https://github.com/hubofvalley/Testnet-Guides/tree/main/0g%20(zero-gravity)${RESET}
+- Valley of 0G Testnet repository: ${BLUE}https://github.com/hubofvalley/Valley-of-0G-Testnet${RESET}
 - Email: ${BLUE}letsbuidltogether@grandvalleys.com${RESET}
 "
 
@@ -225,8 +254,7 @@ echo -e "$INTRO"
 echo -e "$ENDPOINTS"
 echo -e "${YELLOW}\nPress Enter to continue${RESET}"
 read -r
-echo 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' >> ~/.bash_profile
-source $HOME/.bash_profile
+export PATH="$PATH:$HOME/go/bin"
 
 # Validator Node Functions
 function deploy_validator_node() {
@@ -236,16 +264,16 @@ function deploy_validator_node() {
     echo -e "- This script ${GREEN}DOES NOT${RESET} send any data outside your server"
     echo "- All operations are performed locally"
     echo "- You are encouraged to audit the script at:"
-    echo -e "  ${BLUE}https://github.com/hubofvalley/Testnet-Guides/blob/main/0g%20(zero-gravity)/resources/0g_validator_node_galileo_install.sh${RESET}"
+    echo -e "  ${BLUE}https://github.com/hubofvalley/Valley-of-0G-Testnet/blob/main/resources/0g_validator_node_galileo_install.sh${RESET}"
 
     echo -e "\n${YELLOW}2. SYSTEM IMPACT:${RESET}"
     echo -e "${GREEN}New Services:${RESET}"
     echo -e "  • ${CYAN}${OG_SERVICE_NAME}.service${RESET} (Consensus Client)"
-    echo -e "  • ${CYAN}${OG_GETH_SERVICE_NAME}.service${RESET} (Execution Client)"
+    echo -e "  • ${CYAN}${EL_SERVICE_NAME}.service${RESET} (Execution Client; current profile: ${EXEC_CLIENT})"
     
     echo -e "\n${RED}Existing Services to be Replaced:${RESET}"
     echo -e "  • ${CYAN}0gchaind${RESET}"
-    echo -e "  • ${CYAN}0g-geth${RESET}"
+    echo -e "  • ${CYAN}0g-geth / 0g-reth${RESET} (only the selected managed client is active)"
     echo -e "  • ${CYAN}0ggeth${RESET}"
     
     echo -e "\n${GREEN}Port Configuration:${RESET}"
@@ -285,12 +313,19 @@ function deploy_validator_node() {
     sleep 2
 
     run_repository_script resources/0g_validator_node_galileo_install.sh
+    source "$HOME/.bash_profile" 2>/dev/null || true
+    EXEC_CLIENT=${EXEC_CLIENT:-geth}
+    if [ "$EXEC_CLIENT" = "reth" ]; then
+        EL_SERVICE_NAME=${OG_RETH_SERVICE_NAME:-0g-reth}
+    else
+        EL_SERVICE_NAME=${OG_GETH_SERVICE_NAME:-0g-geth}
+    fi
     menu
 }
 
 function manage_validator_node() {
     echo "Choose an option:"
-    echo "1. Update Validator Node Version (includes Cosmovisor migration and deployment)"
+    echo "1. Update Validator Node Version (preserves the currently selected execution client)"
     echo "2. Back"
     read -p "Enter your choice (1/2): " choice
 
@@ -317,36 +352,32 @@ function apply_snapshot() {
 }
 
 function install_0gchain_app() {
-    cd $HOME || return
-    local archive="galileo-v3.0.4.tar.gz"
-    local expected_sha256="62455814f2f2b3ca29e97807ebf87a26ade56a7f833b1932c06e39059b915025"
-    echo "Downloading and installing managed 0gchaind v3.0.4..."
-    
-    # Download and extract package
-    wget -q "https://github.com/0gfoundation/0gchain-NG/releases/download/v3.0.4/${archive}" -O "$archive"
-    echo "${expected_sha256}  ${archive}" | sha256sum --check || {
-        echo "Checksum verification failed. Nothing was installed." >&2
-        rm -f "$archive"
+    local archive="galileo-v3.0.8.tar.gz"
+    local expected_sha256="b9c008865513c06e2cf75d7e2daee27f739356a45e505e492dcffe70b90457a7"
+    local url="https://github.com/0gfoundation/0gchain-NG/releases/download/v3.0.8/${archive}"
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    echo "Downloading and installing managed 0gchaind v3.0.8..."
+    if ! curl -fL --retry 3 "$url" -o "$tmpdir/$archive"; then
+        rm -rf "$tmpdir"
+        echo "Download failed. Nothing was installed." >&2
         return 1
-    }
-    tar -xzf "$archive" -C $HOME
-    
-    # Ensure target directories exist
-    mkdir -p $HOME/go/bin
-    
-    # Install binary
-    if [ -f "$HOME/galileo/bin/0gchaind" ]; then
-        # Copy to standard location
-        cp "$HOME/galileo/bin/0gchaind" "$HOME/go/bin/0gchaind"
-        sudo chmod +x "$HOME/go/bin/0gchaind"
-        echo "0gchaind v3.0.4 installed successfully to:"
-        echo "- $HOME/go/bin/0gchaind"
-    else
-        echo "Error: 0gchaind binary not found in extracted package!"
     fi
-    
-    # Cleanup
-    rm -f "$archive"
+    if ! printf '%s  %s\n' "$expected_sha256" "$tmpdir/$archive" | sha256sum --check; then
+        rm -rf "$tmpdir"
+        echo "Checksum verification failed. Nothing was installed." >&2
+        return 1
+    fi
+    tar -xzf "$tmpdir/$archive" -C "$tmpdir"
+    if [ ! -x "$tmpdir/galileo-v3.0.8/bin/0gchaind" ]; then
+        rm -rf "$tmpdir"
+        echo "Verified archive is missing bin/0gchaind." >&2
+        return 1
+    fi
+    mkdir -p "$HOME/go/bin"
+    install -m 0755 "$tmpdir/galileo-v3.0.8/bin/0gchaind" "$HOME/go/bin/0gchaind"
+    rm -rf "$tmpdir"
+    echo "0gchaind v3.0.8 installed successfully at $HOME/go/bin/0gchaind"
     menu
 }
 
@@ -570,20 +601,19 @@ function query_balance() {
 # }
 
 function delete_validator_node() {
-    sudo systemctl stop ${OG_SERVICE_NAME} ${OG_GETH_SERVICE_NAME}
-    sudo systemctl disable ${OG_SERVICE_NAME} ${OG_GETH_SERVICE_NAME}
-    sudo rm -rf /etc/systemd/system/${OG_SERVICE_NAME}.service /etc/systemd/system/${OG_GETH_SERVICE_NAME}.service
-    sudo rm -r $HOME/galileo
-    sudo rm -r $HOME/.0gchaind
-    sudo rm -rf $HOME/galileo-v3.0.4
+    sudo systemctl stop "$OG_SERVICE_NAME" "$EL_SERVICE_NAME"
+    sudo systemctl disable "$OG_SERVICE_NAME" "$EL_SERVICE_NAME"
+    sudo rm -f "/etc/systemd/system/${OG_SERVICE_NAME}.service" "/etc/systemd/system/${EL_SERVICE_NAME}.service"
+    rm -rf "$HOME/galileo" "$HOME/.0gchaind"
     sed -i "/OG_/d" $HOME/.bash_profile
+    sed -i "/EXEC_CLIENT/d" $HOME/.bash_profile
     echo "Validator node deleted successfully."
     menu
 }
 
 function show_validator_logs() {
-    echo "Displaying Consensus Client and Execution Client (Geth) Logs:"
-    sudo journalctl -u ${OG_SERVICE_NAME} -u ${OG_GETH_SERVICE_NAME} -fn 100 --no-pager
+    echo "Displaying Consensus Client and Execution Client (${EXEC_CLIENT}) Logs:"
+    sudo journalctl -u "$OG_SERVICE_NAME" -u "$EL_SERVICE_NAME" -fn 100 --no-pager
     menu
 }
 
@@ -594,25 +624,39 @@ function show_consensus_client_logs() {
 }
 
 function show_geth_logs() {
-    echo "Displaying Execution Client (Geth) Logs:"
-    sudo journalctl -u ${OG_GETH_SERVICE_NAME} -fn 100
+    echo "Displaying Execution Client (${EXEC_CLIENT}) Logs:"
+    sudo journalctl -u "$EL_SERVICE_NAME" -fn 100
     menu
 }
 
 function show_node_status() {
-    port=$(grep -oP 'laddr = "tcp://(0.0.0.0|127.0.0.1):\K[0-9]+57' "$HOME/.0gchaind/0g-home/0gchaind-home/config/config.toml") && curl "http://127.0.0.1:$port/status" | jq
-    realtime_block_height=$(curl -s -X POST "https://evmrpc-testnet.0g.ai" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' | jq -r '.result' | xargs printf "%d\n")
-    geth_block_height=$(0g-geth --exec "eth.blockNumber" attach $HOME/.0gchaind/0g-home/geth-home/geth.ipc)
-    node_height=$(curl -s "http://127.0.0.1:$port/status" | jq -r '.result.sync_info.latest_block_height')
+    port=$(grep -oP 'laddr = "tcp://(0.0.0.0|127.0.0.1):\K[0-9]+57' "$HOME/.0gchaind/0g-home/0gchaind-home/config/config.toml")
+    curl -fsS "http://127.0.0.1:$port/status" | jq
+    realtime_block_hex=$(curl -fsS -X POST "https://evmrpc-testnet.0g.ai" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' | jq -r '.result // empty')
+    local_el_hex=$(curl -fsS -X POST "http://127.0.0.1:${OG_PORT}545" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' | jq -r '.result // empty')
+    if [[ "$realtime_block_hex" =~ ^0x[0-9a-fA-F]+$ ]]; then
+        realtime_block_height=$((16#${realtime_block_hex#0x}))
+    else
+        realtime_block_height="N/A"
+    fi
+    if [[ "$local_el_hex" =~ ^0x[0-9a-fA-F]+$ ]]; then
+        local_el_height=$((16#${local_el_hex#0x}))
+    else
+        local_el_height="N/A"
+    fi
+    node_height=$(curl -fsS "http://127.0.0.1:$port/status" | jq -r '.result.sync_info.latest_block_height')
     echo "Consensus client block height: $node_height"
-    echo "Execution client (0g-geth) block height: $geth_block_height"
-    block_difference=$(( realtime_block_height - node_height ))
+    echo "Execution client (${EXEC_CLIENT}) block height: $local_el_height"
+    block_difference="N/A"
+    if [[ "$realtime_block_height" =~ ^[0-9]+$ && "$node_height" =~ ^[0-9]+$ ]]; then
+        block_difference=$(( realtime_block_height - node_height ))
+    fi
     echo "Real-time Block Height: $realtime_block_height"
-    echo -e "${YELLOW}Block Difference:${NC} $block_difference"
+    echo -e "${YELLOW}Block Difference:${RESET} $block_difference"
 
     # Add explanation for negative values
-    if (( block_difference < 0 )); then
-        echo -e "${GREEN}Note:${NC} A negative value is normal - this means 0G Official's Testnet RPC block height is currently behind your node's height"
+    if [[ "$block_difference" =~ ^-?[0-9]+$ ]] && (( block_difference < 0 )); then
+        echo -e "${GREEN}Note:${RESET} A negative value is normal - this means 0G Official's Testnet RPC block height is currently behind your node's height"
     fi
     echo -e "\n${YELLOW}Press Enter to go back to main menu${RESET}"
     read -r
@@ -620,13 +664,14 @@ function show_node_status() {
 }
 
 function stop_validator_node() {
-    sudo systemctl stop ${OG_SERVICE_NAME} ${OG_GETH_SERVICE_NAME}
+    sudo systemctl stop "$OG_SERVICE_NAME" "$EL_SERVICE_NAME"
     menu
 }
 
 function restart_validator_node() {
     sudo systemctl daemon-reload
-    sudo systemctl restart ${OG_SERVICE_NAME} ${OG_GETH_SERVICE_NAME}
+    sudo systemctl restart "$EL_SERVICE_NAME"
+    sudo systemctl restart "$OG_SERVICE_NAME"
     menu
 }
 
@@ -639,7 +684,7 @@ function restart_validator_node() {
 function add_peers() {
     echo "Select an option:"
     echo "1. Add peers manually"
-    echo "2. Use Grand Valley's peers"
+    echo "2. Grand Valley automatic peer discovery (temporarily unavailable)"
     read -p "Enter your choice (1 or 2): " choice
 
     case $choice in
@@ -656,16 +701,8 @@ function add_peers() {
             fi
             ;;
         2)
-            peers=$(curl -sS https://lightnode-rpc-0g.grandvalleys.com/net_info | jq -r '.result.peers[] | "\(.node_info.id)@\(.remote_ip):\(.node_info.listen_addr)"' | awk -F ':' '{print $1":"$(NF)}' | paste -sd, -)
-            echo "Grand Valley's peers: $peers"
-            read -p "Do you want to proceed? (yes/no): " confirm
-            if [[ $confirm == "yes" ]]; then
-                sed -i -e "s|^persistent_peers *=.*|persistent_peers = \"a97c8615903e795135066842e5739e30d64e2342@peer-0g.grandvalleys.com:28656,$peers\"|" $HOME/.0gchaind/0g-home/0gchaind-home/config/config.toml
-                echo "Grand Valley's peers added."
-            else
-                echo "Operation cancelled. Returning to menu."
-                menu
-            fi
+            echo "Automatic Grand Valley Testnet peer discovery is disabled because the legacy public RPC endpoint has not passed current live verification."
+            echo "Use manual peers from a currently verified Galileo source instead."
             ;;
         *)
             echo "Invalid choice. Please enter 1 or 2."
@@ -965,11 +1002,11 @@ function show_guidelines() {
 
     echo -e "${GREEN}5. Additional Tips${RESET}"
     echo "   - Always backup your wallets and important data before performing operations like deleting nodes."
-    echo "   - Use Valley's managed validator target (currently v3.0.4); review newer upstream releases before upgrading."
+    echo "   - Valley's managed Galileo target is v3.0.8; live clean-host rehearsal remains a release gate."
 
     echo -e "${GREEN}6. Option Descriptions and Guides${RESET}"
     echo -e "${GREEN}Validator Node Options:${RESET}"
-    echo "   a. Deploy/re-Deploy Validator Node: Sets up a new validator node or redeploys an existing one (managed v3.0.4)."
+    echo "   a. Deploy/re-Deploy Validator Node: Sets up Galileo v3.0.8 with selectable Geth/Reth (Reth recommended for fresh installs)."
     echo "      - Guide: This will install all necessary components. Ensure your system meets requirements."
     echo "   b. Manage Validator Node: Update validator node version using the reviewed managed flow or return to menu."
     echo "   c. Add Peers: Manually add peers or use Grand Valley's peers."
@@ -1005,7 +1042,7 @@ function show_guidelines() {
     echo "   i. Delete Storage KV: Removes KV node."
 
     echo -e "${GREEN}Utilities:${RESET}"
-    echo "   5. Install 0gchain App: Installs the managed CLI (v3.0.4) for transactions without running a node."
+    echo "   5. Install 0gchain App: Installs the managed CLI (v3.0.8) for transactions without running a node."
     echo "   6. Show Endpoints: Displays Grand Valley's public endpoints."
     echo "   7. Show Guidelines: Displays this help information."
 
@@ -1033,9 +1070,9 @@ function menu() {
     echo "    c. Apply Validator Node Snapshot"
     echo "    d. Add Peers"
     echo "    e. Show Node Status"
-    echo "    f. Show Validator Node Logs (Consensus + Geth)"
+    echo "    f. Show Validator Node Logs (Consensus + ${EXEC_CLIENT})"
     echo "    g. Show Consensus Client Logs"
-    echo "    h. Show Geth Logs"
+    echo "    h. Show Execution Client Logs (${EXEC_CLIENT})"
     echo "    i. Query Balance"
     echo -e "${GREEN}2. Storage Node${RESET}"
     echo "    a. Deploy Storage Node"
@@ -1058,7 +1095,7 @@ function menu() {
     echo "    g. Delete Validator Node (BACKUP YOUR SEEDS PHRASE/EVM-PRIVATE KEY AND priv_validator_key.json BEFORE YOU DO THIS)"
     echo "    h. Delete Storage Node"
     echo "    i. Delete Storage KV"
-    echo -e "${GREEN}5. Install the 0gchain App (managed v3.0.4) only to execute transactions without running a node${RESET}"
+    echo -e "${GREEN}5. Install the 0gchain App (managed v3.0.8) only to execute transactions without running a node${RESET}"
     echo -e "${GREEN}6. Show Grand Valley's Endpoints${RESET}"
     echo -e "${YELLOW}7. Show Guidelines${RESET}"
     echo -e "${RED}8. Exit${RESET}"

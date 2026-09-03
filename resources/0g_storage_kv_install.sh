@@ -132,7 +132,7 @@ git clone -b v1.4.0 https://github.com/0gfoundation/0g-storage-kv.git
 cd $HOME/0g-storage-kv
 git stash
 git fetch --all --tags
-git checkout 99c91d95a1d664ffdc9700ef492a00bd76c9c5d1
+git checkout 707db658c80aebb9f902152b311a1c26884f9e63
 git submodule update --init
 sudo apt install cargo
 

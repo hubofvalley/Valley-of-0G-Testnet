@@ -1,112 +1,95 @@
-#!/bin/bash
-
+#!/usr/bin/env bash
 set -Eeuo pipefail
 
 # shellcheck source=/dev/null
 source "$HOME/.bash_profile" 2>/dev/null || true
 
-readonly MANAGED_VERSION="v3.0.4"
-readonly UPSTREAM_LATEST_REVIEWED_AT="v3.0.8"
-readonly RELEASE_URL="https://github.com/0gfoundation/0gchain-NG/releases/download/v3.0.4/galileo-v3.0.4.tar.gz"
-readonly RELEASE_SHA256="62455814f2f2b3ca29e97807ebf87a26ade56a7f833b1932c06e39059b915025"
-readonly STAKING_ACTIVATION="1767830400"
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+MANIFEST="${VALLEY_MANIFEST_PATH:-$SCRIPT_DIR/../VERSIONS.json}"
+command -v jq >/dev/null 2>&1 || { echo "jq is required to read VERSIONS.json." >&2; exit 2; }
+[ -r "$MANIFEST" ] || { echo "VERSIONS.json is required: $MANIFEST" >&2; exit 2; }
+
+manifest_get() {
+    jq -er "$1 | select(. != null and . != \"\")" "$MANIFEST" 2>/dev/null
+}
+
+MANAGED_VERSION=$(manifest_get '.components.validator.bundle.version_current')
+RELEASE_REF=$(manifest_get '.components.validator.bundle.release_ref')
+RELEASE_REPO=$(manifest_get '.components.validator.bundle.release_repo')
+RELEASE_ARTIFACT=$(manifest_get '.components.validator.bundle.release_artifact')
+RELEASE_SHA256=$(manifest_get '.components.validator.bundle.release_artifact_sha256')
+EXPECTED_CHAIN_ID=$(manifest_get '.chain.evm_chain_id')
+RELEASE_URL="${RELEASE_REPO}/releases/download/${RELEASE_REF}/${RELEASE_ARTIFACT}"
+EXTRACT_DIR="galileo-${MANAGED_VERSION}"
 
 OG_SERVICE_NAME=${OG_SERVICE_NAME:-0gchaind}
-OG_GETH_SERVICE_NAME=${OG_GETH_SERVICE_NAME:-0g-geth}
-BACKUP_DIR="$HOME/backups/valley-0g-testnet"
-GCONFIG="$HOME/.0gchaind/geth-config.toml"
+EXEC_CLIENT=${EXEC_CLIENT:-geth}
+case "$EXEC_CLIENT" in
+    geth) EL_SERVICE_NAME=${OG_GETH_SERVICE_NAME:-0g-geth}; EL_BINARY="$HOME/go/bin/0g-geth" ;;
+    reth) EL_SERVICE_NAME=${OG_RETH_SERVICE_NAME:-0g-reth}; EL_BINARY="$HOME/go/bin/0g-reth" ;;
+    *) echo "Update blocked: EXEC_CLIENT must be geth or reth; found $EXEC_CLIENT." >&2; exit 1 ;;
+esac
 
-if [ -n "${SUDO_USER:-}" ]; then
-    echo "Run the updater as the node OS user, not with sudo." >&2
-    exit 1
-fi
+[[ "$OG_SERVICE_NAME" =~ ^[A-Za-z0-9_.@-]+$ ]] || { echo "Invalid consensus service name." >&2; exit 1; }
+[[ "$EL_SERVICE_NAME" =~ ^[A-Za-z0-9_.@-]+$ ]] || { echo "Invalid execution service name." >&2; exit 1; }
+[ -x "$HOME/go/bin/0gchaind" ] && [ -x "$EL_BINARY" ] || { echo "Existing managed binaries not found; use redeploy instead." >&2; exit 1; }
 
-echo "Valley managed Galileo target: $MANAGED_VERSION"
-echo "Recorded upstream latest: $UPSTREAM_LATEST_REVIEWED_AT (review required; not auto-promoted)"
-echo "Older v3.0.2/v3.0.3 downgrade paths are intentionally disabled."
-echo
-echo "Select version to update:"
-echo "c) $MANAGED_VERSION (Valley managed target)"
-read -r -p "Enter c to continue or anything else to cancel: " choice
-[ "$choice" = "c" ] || { echo "Update cancelled."; exit 0; }
-
-while true; do
-    read -r -p "Deploy type? (validator/rpc): " NODE_TYPE
-    NODE_TYPE=$(printf '%s' "$NODE_TYPE" | tr '[:upper:]' '[:lower:]')
-    [[ "$NODE_TYPE" = "validator" || "$NODE_TYPE" = "rpc" ]] && break
-    echo "Please type exactly 'validator' or 'rpc'."
-done
-
-for svc in "$OG_SERVICE_NAME" "$OG_GETH_SERVICE_NAME"; do
+for svc in "$OG_SERVICE_NAME" "$EL_SERVICE_NAME"; do
     fragment=$(systemctl show "$svc" -p FragmentPath --value 2>/dev/null || true)
-    if [ -n "$fragment" ]; then
-        [ -f "$fragment" ] || { echo "Cannot inspect $svc service: $fragment" >&2; exit 1; }
-        unit_user=$(sed -n 's/^User=//p' "$fragment" | tail -n 1)
-        unit_workdir=$(sed -n 's/^WorkingDirectory=//p' "$fragment" | tail -n 1)
-        if [ "$unit_user" != "$(id -un)" ] || [ "$unit_workdir" != "$HOME/.0gchaind" ]; then
-            echo "Update blocked: $svc.service belongs to another instance." >&2
-            exit 1
-        fi
+    [ -n "$fragment" ] && [ -f "$fragment" ] || { echo "Update blocked: $svc.service not found." >&2; exit 1; }
+    unit_user=$(sed -n 's/^User=//p' "$fragment" | tail -n 1)
+    unit_workdir=$(sed -n 's/^WorkingDirectory=//p' "$fragment" | tail -n 1)
+    if [ "$unit_user" != "$(id -un)" ] || [ "$unit_workdir" != "$HOME/.0gchaind" ]; then
+        echo "Update blocked: $svc.service belongs to another instance." >&2
+        exit 1
     fi
 done
 
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
-archive="$tmpdir/galileo-v3.0.4.tar.gz"
+archive="$tmpdir/$RELEASE_ARTIFACT"
 
-echo "Downloading and verifying $MANAGED_VERSION while services remain online..."
-curl -fsSL "$RELEASE_URL" -o "$archive"
-echo "$RELEASE_SHA256  $archive" | sha256sum --check
+echo "Downloading and verifying Galileo $MANAGED_VERSION while services remain online..."
+curl -fL --retry 3 "$RELEASE_URL" -o "$archive"
+printf '%s  %s\n' "$RELEASE_SHA256" "$archive" | sha256sum --check
 tar -xzf "$archive" -C "$tmpdir"
-staged="$tmpdir/galileo-v3.0.4/$NODE_TYPE/bin"
-[ -x "$staged/geth" ] && [ -x "$staged/0gchaind" ] || {
-    echo "Verified archive does not contain expected $NODE_TYPE binaries." >&2
-    exit 1
-}
-
-[ -f "$GCONFIG" ] || { echo "Missing $GCONFIG; use redeploy instead of updater." >&2; exit 1; }
-candidate_config="$tmpdir/geth-config.toml"
-cp "$GCONFIG" "$candidate_config"
-if grep -Eq '^[[:space:]]*OverrideStakingActivation[[:space:]]*=' "$candidate_config"; then
-    sed -i -E "s/^[[:space:]]*OverrideStakingActivation[[:space:]]*=.*/OverrideStakingActivation = $STAKING_ACTIVATION/" "$candidate_config"
+staged_root="$tmpdir/$EXTRACT_DIR/bin"
+[ -x "$staged_root/0gchaind" ] || { echo "Verified archive is missing bin/0gchaind." >&2; exit 1; }
+if [ "$EXEC_CLIENT" = "geth" ]; then
+    STAGED_EL="$staged_root/geth"
 else
-    patched="$tmpdir/geth-config.patched.toml"
-    if ! awk -v activation="$STAKING_ACTIVATION" '
-      BEGIN { inserted=0 }
-      /^\[[Ee][Tt][Hh]\][[:space:]]*$/ && inserted==0 {
-        print
-        print "OverrideStakingActivation = " activation
-        inserted=1
-        next
-      }
-      { print }
-      END { if (inserted==0) exit 42 }
-    ' "$candidate_config" > "$patched"; then
-        echo "Could not locate [Eth] in geth-config.toml; update blocked before downtime." >&2
+    STAGED_EL="$staged_root/reth"
+fi
+[ -x "$STAGED_EL" ] || { echo "Verified archive is missing the selected $EXEC_CLIENT binary." >&2; exit 1; }
+
+if [ "$EXEC_CLIENT" = "geth" ]; then
+    GCONFIG="$HOME/.0gchaind/geth-config.toml"
+    [ -f "$GCONFIG" ] || { echo "Missing $GCONFIG; use redeploy instead." >&2; exit 1; }
+    grep -Eq '^OverrideStakingActivation[[:space:]]*=[[:space:]]*1767830400$' "$GCONFIG" || {
+        echo "Existing Geth config lacks Galileo staking activation; update blocked before downtime." >&2
         exit 1
-    fi
-    mv "$patched" "$candidate_config"
+    }
 fi
 
+echo "Execution client will remain $EXEC_CLIENT. This update does not combine a Geth<->Reth migration with the bundle upgrade."
 read -r -p "Type UPDATE-GALILEO to begin the downtime window: " confirm
 [ "$confirm" = "UPDATE-GALILEO" ] || { echo "Update cancelled before services were stopped."; exit 0; }
 
 timestamp=$(date -u +%Y%m%dT%H%M%SZ)
-backup="$BACKUP_DIR/$timestamp"
+backup="$HOME/backups/valley-0g-testnet/$timestamp"
 mkdir -p "$backup"
-cp "$HOME/go/bin/0g-geth" "$backup/0g-geth"
+chmod 700 "$backup"
 cp "$HOME/go/bin/0gchaind" "$backup/0gchaind"
-cp "$GCONFIG" "$backup/geth-config.toml"
+cp "$EL_BINARY" "$backup/$(basename "$EL_BINARY")"
 
 service_stopped=0
 success=0
 rollback() {
     [ "$service_stopped" -eq 1 ] || return 0
-    echo "Validator update failed after downtime began; restoring previous binaries/config." >&2
-    cp "$backup/0g-geth" "$HOME/go/bin/0g-geth" 2>/dev/null || true
-    cp "$backup/0gchaind" "$HOME/go/bin/0gchaind" 2>/dev/null || true
-    cp "$backup/geth-config.toml" "$GCONFIG" 2>/dev/null || true
-    sudo systemctl restart "$OG_GETH_SERVICE_NAME" 2>/dev/null || true
+    echo "Galileo update failed after downtime began; restoring previous binaries." >&2
+    install -m 0755 "$backup/0gchaind" "$HOME/go/bin/0gchaind" 2>/dev/null || true
+    install -m 0755 "$backup/$(basename "$EL_BINARY")" "$EL_BINARY" 2>/dev/null || true
+    sudo systemctl restart "$EL_SERVICE_NAME" 2>/dev/null || true
     sudo systemctl restart "$OG_SERVICE_NAME" 2>/dev/null || true
 }
 finish() {
@@ -119,17 +102,33 @@ trap finish EXIT
 
 service_stopped=1
 sudo systemctl stop "$OG_SERVICE_NAME"
-sudo systemctl stop "$OG_GETH_SERVICE_NAME"
-install -m 0755 "$staged/geth" "$HOME/go/bin/0g-geth"
-install -m 0755 "$staged/0gchaind" "$HOME/go/bin/0gchaind"
-install -m 0600 "$candidate_config" "$GCONFIG"
-
-sudo systemctl restart "$OG_GETH_SERVICE_NAME"
+sudo systemctl stop "$EL_SERVICE_NAME"
+install -m 0755 "$staged_root/0gchaind" "$HOME/go/bin/0gchaind"
+install -m 0755 "$STAGED_EL" "$EL_BINARY"
+sudo systemctl restart "$EL_SERVICE_NAME"
+if [ "$EXEC_CLIENT" = "reth" ]; then
+    engine_port=${OG_PORT:-26}551
+    engine_ready=no
+    for _ in $(seq 1 30); do
+        if ss -lnt 2>/dev/null | grep -q ":${engine_port}[[:space:]]"; then
+            engine_ready=yes
+            break
+        fi
+        sleep 1
+    done
+    [ "$engine_ready" = "yes" ] || { echo "Reth Engine API did not become ready; triggering rollback before consensus restart." >&2; exit 1; }
+fi
 sudo systemctl restart "$OG_SERVICE_NAME"
 sleep 2
-systemctl is-active --quiet "$OG_GETH_SERVICE_NAME"
+systemctl is-active --quiet "$EL_SERVICE_NAME"
 systemctl is-active --quiet "$OG_SERVICE_NAME"
+
+rpc_port=${OG_PORT:-26}545
+chain_hex=$(curl -fsS --connect-timeout 3 --max-time 6 -H 'Content-Type: application/json' \
+    -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' "http://127.0.0.1:${rpc_port}" 2>/dev/null | jq -r '.result // empty' || true)
+if [[ "$chain_hex" =~ ^0x[0-9a-fA-F]+$ ]]; then chain_dec=$((16#${chain_hex#0x})); else chain_dec=""; fi
+[ "$chain_dec" = "$EXPECTED_CHAIN_ID" ] || { echo "Post-update local chain verification failed." >&2; exit 1; }
 
 success=1
 service_stopped=0
-echo "Galileo $MANAGED_VERSION update completed. Backup retained at: $backup"
+echo "Galileo $MANAGED_VERSION update completed with $EXEC_CLIENT preserved. Backup retained at: $backup"

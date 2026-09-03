@@ -27,7 +27,7 @@ set -e
 printf '%s\n' "$json_out" | jq -e '.network == "testnet" and .expected_chain_id == 16602 and (.results | type == "array")' >/dev/null || fail "invalid doctor JSON contract"
 
 doctor_dispatch_line=$(grep -n 'if \[ "${1:-}" = "doctor" \]' "$MAIN" | head -n1 | cut -d: -f1)
-profile_source_line=$(grep -n '^source \$HOME/.bash_profile' "$MAIN" | head -n1 | cut -d: -f1)
+profile_source_line=$(grep -n '^source "\$HOME/.bash_profile"' "$MAIN" | head -n1 | cut -d: -f1)
 [ -n "$doctor_dispatch_line" ] && [ -n "$profile_source_line" ] || fail "could not locate doctor dispatch/profile source"
 [ "$doctor_dispatch_line" -lt "$profile_source_line" ] || fail "doctor dispatch must run before interactive profile/prompt path"
 

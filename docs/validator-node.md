@@ -25,10 +25,14 @@ Deploy and manage a 0G validator node on Galileo testnet.
 
 | Component | Details |
 |-----------|---------|
-| **0gchaind** | Consensus client (managed v3.0.4) |
-| **0g-geth** | Execution client |
+| **0gchaind** | Consensus client (managed Galileo v3.0.8) |
+| **0g-geth / 0g-reth** | Selectable execution client; Reth is recommended for fresh installs |
 | **0gchaind.service** | Systemd service for consensus |
-| **0g-geth.service** | Systemd service for execution |
+| **0g-geth.service / 0g-reth.service** | Execution service, depending on selected client |
+
+The canonical network identity is consensus `0G-testnet-galileo` plus EVM chain ID `16602`. The installer verifies both identities inside the pinned release archive before destructive redeploy begins.
+
+For an existing Geth node, the managed updater keeps Geth. It does not combine a Galileo binary upgrade with a Geth-to-Reth database migration. A clean Reth deployment initializes its own Reth database from the pinned Galileo genesis.
 | **Data directory** | `$HOME/.0gchaind` |
 
 ## Updating

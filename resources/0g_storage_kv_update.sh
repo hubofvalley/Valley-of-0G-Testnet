@@ -4,7 +4,7 @@ set -Eeuo pipefail
 
 readonly FALLBACK_CHAIN_ID="16602"
 readonly FALLBACK_TARGET_VERSION="v1.4.0"
-readonly FALLBACK_TARGET_COMMIT="99c91d95a1d664ffdc9700ef492a00bd76c9c5d1"
+readonly FALLBACK_TARGET_COMMIT="707db658c80aebb9f902152b311a1c26884f9e63"
 readonly KV_REPO="https://github.com/0gfoundation/0g-storage-kv.git"
 readonly SERVICE_NAME="zgskv"
 

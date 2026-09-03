@@ -1,101 +1,51 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-# ==== CONFIG ====
 echo -e "\n--- 0G Testnet Node Setup (Validator or RPC) ---"
 
-LOGO="
- __                                   
-/__ ._ _. ._   _|   \  / _. | |  _    
-\_| | (_| | | (_|    \/ (_| | | (/_ \/
-                                    /
-"
-echo "$LOGO"
-
-# Colours
 RED="\e[31m"; GREEN="\e[32m"; YELLOW="\e[33m"; CYAN="\e[36m"; RESET="\e[0m"
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+MANIFEST="${VALLEY_MANIFEST_PATH:-$SCRIPT_DIR/../VERSIONS.json}"
 
-readonly GALILEO_VERSION="v3.0.4"
-readonly GALILEO_ARCHIVE="galileo-v3.0.4.tar.gz"
-readonly GALILEO_SHA256="62455814f2f2b3ca29e97807ebf87a26ade56a7f833b1932c06e39059b915025"
-readonly GALILEO_URL="https://github.com/0gfoundation/0gchain-NG/releases/download/v3.0.4/galileo-v3.0.4.tar.gz"
+command -v jq >/dev/null 2>&1 || { echo "jq is required to read VERSIONS.json." >&2; exit 2; }
+[ -r "$MANIFEST" ] || { echo "VERSIONS.json is required: $MANIFEST" >&2; exit 2; }
+jq -e '.network == "0g-testnet"' "$MANIFEST" >/dev/null || { echo "Invalid 0G testnet manifest." >&2; exit 2; }
 
-# ===== CHOOSE NODE TYPE =====
-while true; do
-  read -p "Deploy type? (validator/rpc): " NODE_TYPE
-  NODE_TYPE=$(echo "$NODE_TYPE" | tr '[:upper:]' '[:lower:]')
-  if [[ "$NODE_TYPE" == "validator" || "$NODE_TYPE" == "rpc" ]]; then
-    break
-  else
-    echo "Please type exactly 'validator' or 'rpc'."
-  fi
-done
+manifest_get() {
+    local query=$1 value
+    value=$(jq -er "$query | select(. != null and . != \"\")" "$MANIFEST" 2>/dev/null) || {
+        echo "Required VERSIONS.json field missing: $query" >&2
+        return 2
+    }
+    printf '%s\n' "$value"
+}
 
-# Prompt for MONIKER, OG_PORT, Indexer
-read -p "Enter your moniker: " MONIKER
-read -p "Enter your preferred port number: (leave empty to use default: 26) " OG_PORT
-if [ -z "$OG_PORT" ]; then
-    OG_PORT=26
-fi
-read -p "Do you want to enable the indexer? (yes/no): " ENABLE_INDEXER
-read -p "Configure UFW firewall rules for 0G? (y/n): " SETUP_UFW
+GALILEO_VERSION=$(manifest_get '.components.validator.bundle.version_current')
+GALILEO_RELEASE_REF=$(manifest_get '.components.validator.bundle.release_ref')
+GALILEO_COMMIT=$(manifest_get '.components.validator.bundle.release_commit')
+GALILEO_REPO=$(manifest_get '.components.validator.bundle.release_repo')
+GALILEO_ARCHIVE=$(manifest_get '.components.validator.bundle.release_artifact')
+GALILEO_SHA256=$(manifest_get '.components.validator.bundle.release_artifact_sha256')
+EXPECTED_CHAIN_ID=$(manifest_get '.chain.evm_chain_id')
+CONSENSUS_NETWORK=$(manifest_get '.chain.consensus_network')
+GALILEO_EXTRACT_DIR="galileo-${GALILEO_VERSION}"
+GALILEO_URL="${GALILEO_REPO}/releases/download/${GALILEO_RELEASE_REF}/${GALILEO_ARCHIVE}"
 
-# Extra prompts for VALIDATOR
-if [ "$NODE_TYPE" = "validator" ]; then
-  read -p "Enter Holesky Testnet ETH RPC endpoint (ETH_RPC_URL): " ETH_RPC_URL
-  while [ -z "$ETH_RPC_URL" ]; do
-    echo "ETH_RPC_URL cannot be empty for validator mode."
-    read -p "Enter Holesky Testnet ETH RPC endpoint (ETH_RPC_URL): " ETH_RPC_URL
-  done
-  read -p "Enter block range to fetch logs (BLOCK_NUM), e.g. 2000: " BLOCK_NUM
-  while ! [[ "$BLOCK_NUM" =~ ^[0-9]+$ ]]; do
-    echo "BLOCK_NUM must be a positive integer."
-    read -p "Enter block range to fetch logs (BLOCK_NUM), e.g. 2000: " BLOCK_NUM
-  done
-fi
+[[ "$GALILEO_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid Galileo release commit." >&2; exit 2; }
+[[ "$GALILEO_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "Invalid Galileo release digest." >&2; exit 2; }
+[[ "$EXPECTED_CHAIN_ID" =~ ^[0-9]+$ ]] || { echo "Invalid Galileo EVM chain ID." >&2; exit 2; }
 
-# Service Name Configuration (for multi-instance support)
-if [ -z "${OG_SERVICE_NAME:-}" ]; then
-    read -p "Enter Consensus Service Name (default '0gchaind'): " OG_SERVICE_NAME
-    OG_SERVICE_NAME=${OG_SERVICE_NAME:-0gchaind}
-fi
+validate_service_name() {
+    [[ "${1:-}" =~ ^[A-Za-z0-9_.@-]+$ ]]
+}
 
-if [ -z "${OG_GETH_SERVICE_NAME:-}" ]; then
-    read -p "Enter Geth Service Name (default '0g-geth'): " OG_GETH_SERVICE_NAME
-    OG_GETH_SERVICE_NAME=${OG_GETH_SERVICE_NAME:-0g-geth}
-fi
-
-echo "Using Service Names: ${OG_SERVICE_NAME} and ${OG_GETH_SERVICE_NAME}"
-
-# Save env vars
-{
-  echo "export MONIKER=\"$MONIKER\""
-  echo "export OG_PORT=\"$OG_PORT\""
-  echo "export NODE_TYPE=\"$NODE_TYPE\""
-  echo "export OG_SERVICE_NAME=\"$OG_SERVICE_NAME\""
-  echo "export OG_GETH_SERVICE_NAME=\"$OG_GETH_SERVICE_NAME\""
-  if [ "$NODE_TYPE" = "validator" ]; then
-    echo "export ETH_RPC_URL=\"$ETH_RPC_URL\""
-    echo "export BLOCK_NUM=\"$BLOCK_NUM\""
-  fi
-  echo 'export PATH=$PATH:$HOME/galileo/bin'
-  } >> ~/.bash_profile
-  source ~/.bash_profile
-
-# ==== PREPARE AND VERIFY RELEASE BEFORE DOWNTIME ====
-if ! command -v wget >/dev/null 2>&1; then
-    sudo apt update
-    sudo apt install -y wget
-fi
-command -v sha256sum >/dev/null 2>&1 || { echo "sha256sum is required." >&2; exit 1; }
-
-STAGE_DIR=$(mktemp -d)
-trap 'rm -rf "$STAGE_DIR"' EXIT
-STAGED_ARCHIVE="$STAGE_DIR/$GALILEO_ARCHIVE"
-echo "Downloading managed Galileo release $GALILEO_VERSION before touching the running node..."
-wget -q "$GALILEO_URL" -O "$STAGED_ARCHIVE"
-echo "$GALILEO_SHA256  $STAGED_ARCHIVE" | sha256sum --check || {
-    echo -e "${RED}Galileo release checksum verification failed. Nothing was changed.${RESET}" >&2
-    exit 1
+persist_export() {
+    local key=$1 value=$2 profile="$HOME/.bash_profile" tmp
+    touch "$profile"
+    tmp=$(mktemp)
+    grep -v -E "^export[[:space:]]+${key}=" "$profile" > "$tmp" || true
+    printf 'export %s=%q\n' "$key" "$value" >> "$tmp"
+    mv "$tmp" "$profile"
 }
 
 service_belongs_to_current_instance() {
@@ -113,11 +63,108 @@ service_belongs_to_current_instance() {
     fi
 }
 
-for candidate_service in 0gchaind "$OG_SERVICE_NAME" 0g-geth 0ggeth "$OG_GETH_SERVICE_NAME"; do
-    service_belongs_to_current_instance "$candidate_service" || exit 1
+rpc_chain_id() {
+    local endpoint=$1 result
+    result=$(curl -fsS --connect-timeout 3 --max-time 6 \
+        -H 'Content-Type: application/json' \
+        -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
+        "$endpoint" 2>/dev/null | jq -r '.result // empty' 2>/dev/null || true)
+    if [[ "$result" =~ ^0x[0-9a-fA-F]+$ ]]; then
+        printf '%d\n' "$((16#${result#0x}))"
+    elif [[ "$result" =~ ^[0-9]+$ ]]; then
+        printf '%s\n' "$result"
+    fi
+}
+
+for tool in curl jq sha256sum tar systemctl; do
+    command -v "$tool" >/dev/null 2>&1 || { echo "Required tool missing: $tool" >&2; exit 1; }
 done
 
-echo -e "${YELLOW}The managed release has been verified. This redeploy will replace existing Galileo node state.${RESET}"
+while true; do
+    read -r -p "Deploy type? (validator/rpc): " NODE_TYPE
+    NODE_TYPE=$(printf '%s' "$NODE_TYPE" | tr '[:upper:]' '[:lower:]')
+    [[ "$NODE_TYPE" = "validator" || "$NODE_TYPE" = "rpc" ]] && break
+    echo "Please type exactly 'validator' or 'rpc'."
+done
+
+echo -e "\n${CYAN}Select execution client:${RESET}"
+echo "1) Geth - supported compatibility path"
+echo "2) Reth - upstream-recommended fresh-install path"
+while true; do
+    read -r -p "Enter 1 or 2 [default: 2]: " EL_CHOICE
+    EL_CHOICE=${EL_CHOICE:-2}
+    case "$EL_CHOICE" in
+        1) EXEC_CLIENT=geth; break ;;
+        2) EXEC_CLIENT=reth; break ;;
+        *) echo "Please enter 1 or 2." ;;
+    esac
+done
+
+read -r -p "Enter your moniker: " MONIKER
+[[ "$MONIKER" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || { echo "Moniker must be 1-64 characters using letters, numbers, dot, underscore, or dash." >&2; exit 1; }
+read -r -p "Enter your preferred port prefix (default: 26): " OG_PORT
+OG_PORT=${OG_PORT:-26}
+[[ "$OG_PORT" =~ ^[0-9]{1,2}$ ]] || { echo "Port prefix must be one or two digits." >&2; exit 1; }
+(( 10#$OG_PORT >= 1 && 10#$OG_PORT <= 64 )) || { echo "Port prefix must be between 1 and 64 so derived ports stay valid." >&2; exit 1; }
+read -r -p "Do you want to enable the indexer? (yes/no): " ENABLE_INDEXER
+read -r -p "Configure UFW firewall rules for 0G? (y/n): " SETUP_UFW
+
+if [ "$NODE_TYPE" = "validator" ]; then
+    read -r -p "Enter Holesky Testnet ETH RPC endpoint (ETH_RPC_URL): " ETH_RPC_URL
+    [[ "$ETH_RPC_URL" =~ ^https?://[^[:space:]]+$ ]] || { echo "ETH_RPC_URL must be a non-whitespace http(s) URL." >&2; exit 1; }
+    read -r -p "Enter block range to fetch logs (BLOCK_NUM), e.g. 2000: " BLOCK_NUM
+    [[ "$BLOCK_NUM" =~ ^[0-9]+$ ]] || { echo "BLOCK_NUM must be a positive integer." >&2; exit 1; }
+fi
+
+if [ -z "${OG_SERVICE_NAME:-}" ]; then
+    read -r -p "Enter Consensus Service Name (default '0gchaind'): " OG_SERVICE_NAME
+    OG_SERVICE_NAME=${OG_SERVICE_NAME:-0gchaind}
+fi
+validate_service_name "$OG_SERVICE_NAME" || { echo "Invalid consensus service name." >&2; exit 1; }
+
+if [ "$EXEC_CLIENT" = "geth" ]; then
+    if [ -z "${OG_GETH_SERVICE_NAME:-}" ]; then
+        read -r -p "Enter Geth Service Name (default '0g-geth'): " OG_GETH_SERVICE_NAME
+        OG_GETH_SERVICE_NAME=${OG_GETH_SERVICE_NAME:-0g-geth}
+    fi
+    validate_service_name "$OG_GETH_SERVICE_NAME" || { echo "Invalid Geth service name." >&2; exit 1; }
+    EL_SERVICE_NAME=$OG_GETH_SERVICE_NAME
+else
+    if [ -z "${OG_RETH_SERVICE_NAME:-}" ]; then
+        read -r -p "Enter Reth Service Name (default '0g-reth'): " OG_RETH_SERVICE_NAME
+        OG_RETH_SERVICE_NAME=${OG_RETH_SERVICE_NAME:-0g-reth}
+    fi
+    validate_service_name "$OG_RETH_SERVICE_NAME" || { echo "Invalid Reth service name." >&2; exit 1; }
+    EL_SERVICE_NAME=$OG_RETH_SERVICE_NAME
+fi
+
+echo "Using services: ${OG_SERVICE_NAME}.service and ${EL_SERVICE_NAME}.service"
+
+STAGE_DIR=$(mktemp -d)
+trap 'rm -rf "$STAGE_DIR"' EXIT
+STAGED_ARCHIVE="$STAGE_DIR/$GALILEO_ARCHIVE"
+echo "Downloading Galileo $GALILEO_VERSION before touching the running node..."
+curl -fL --retry 3 "$GALILEO_URL" -o "$STAGED_ARCHIVE"
+printf '%s  %s\n' "$GALILEO_SHA256" "$STAGED_ARCHIVE" | sha256sum --check
+tar -xzf "$STAGED_ARCHIVE" -C "$STAGE_DIR"
+STAGED_BUNDLE="$STAGE_DIR/$GALILEO_EXTRACT_DIR"
+[ -d "$STAGED_BUNDLE/$NODE_TYPE" ] || { echo "Verified archive is missing $NODE_TYPE profile." >&2; exit 1; }
+[ -x "$STAGED_BUNDLE/bin/0gchaind" ] || { echo "Verified archive is missing bin/0gchaind." >&2; exit 1; }
+[ -x "$STAGED_BUNDLE/bin/geth" ] || { echo "Verified archive is missing bin/geth." >&2; exit 1; }
+[ -x "$STAGED_BUNDLE/bin/reth" ] || { echo "Verified archive is missing bin/reth." >&2; exit 1; }
+archive_network=$(jq -r '.chain_id // empty' "$STAGED_BUNDLE/$NODE_TYPE/0g-home/0gchaind-home/config/genesis.json")
+[ "$archive_network" = "$CONSENSUS_NETWORK" ] || { echo "Verified archive consensus network mismatch: ${archive_network:-missing}." >&2; exit 1; }
+archive_chain=$(sed -n -E 's/^[[:space:]]*NetworkId[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' "$STAGED_BUNDLE/$NODE_TYPE/geth-config.toml" | head -n 1)
+[ "$archive_chain" = "$EXPECTED_CHAIN_ID" ] || { echo "Verified archive EVM chain mismatch: ${archive_chain:-missing}." >&2; exit 1; }
+
+# Resolve the externally advertised P2P address before the destructive gate.
+# A transient IP-discovery failure must never leave a previously working node deleted.
+EXTERNAL_IP=$(curl -fsS --connect-timeout 3 --max-time 6 https://api.ipify.org || true)
+[[ "$EXTERNAL_IP" =~ ^[0-9a-fA-F:.]+$ ]] || { echo "Could not determine a safe external IP for P2P advertisement; redeploy was not started." >&2; exit 1; }
+
+for candidate_service in 0gchaind "$OG_SERVICE_NAME" 0g-geth 0ggeth 0g-reth reth "${OG_GETH_SERVICE_NAME:-_skip_}" "${OG_RETH_SERVICE_NAME:-_skip_}"; do
+    service_belongs_to_current_instance "$candidate_service" || exit 1
+done
 
 REDEPLOY_BACKUP_DIR="$HOME/valley-0g-testnet-redeploy-backups/$(date -u +%Y%m%dT%H%M%SZ)"
 OLD_CONS_HOME="$HOME/.0gchaind/0g-home/0gchaind-home"
@@ -130,254 +177,281 @@ if [ -f "$OLD_CONS_HOME/config/priv_validator_key.json" ]; then
     [ -f "$OLD_CONS_HOME/data/priv_validator_state.json" ] && cp "$OLD_CONS_HOME/data/priv_validator_state.json" "$REDEPLOY_BACKUP_DIR/priv_validator_state.json"
     chmod 600 "$REDEPLOY_BACKUP_DIR"/*.json
     PRESERVE_VALIDATOR_IDENTITY=yes
-    echo -e "${YELLOW}Existing consensus validator identity/state will be preserved from:${RESET} $REDEPLOY_BACKUP_DIR"
+    echo -e "${YELLOW}Existing consensus validator identity/state will be preserved at:${RESET} $REDEPLOY_BACKUP_DIR"
 fi
 
+echo -e "${YELLOW}Verified Galileo $GALILEO_VERSION is staged. Redeploy replaces local Galileo node state.${RESET}"
+echo "Fresh installs may choose Reth, but this workflow does not perform an in-place Geth->Reth database migration."
 read -r -p "Type REDEPLOY-GALILEO to continue: " REDEPLOY_CONFIRM
-if [ "$REDEPLOY_CONFIRM" != "REDEPLOY-GALILEO" ]; then
-    echo "Redeploy cancelled before any service or node data was changed."
-    exit 0
+[ "$REDEPLOY_CONFIRM" = "REDEPLOY-GALILEO" ] || { echo "Redeploy cancelled before services/data were changed."; exit 0; }
+
+sudo systemctl stop 0gchaind "$OG_SERVICE_NAME" 2>/dev/null || true
+sudo systemctl stop 0g-geth 0ggeth 0g-reth reth "${OG_GETH_SERVICE_NAME:-_skip_}" "${OG_RETH_SERVICE_NAME:-_skip_}" 2>/dev/null || true
+sudo systemctl disable 0gchaind "$OG_SERVICE_NAME" 2>/dev/null || true
+sudo systemctl disable 0g-geth 0ggeth 0g-reth reth "${OG_GETH_SERVICE_NAME:-_skip_}" "${OG_RETH_SERVICE_NAME:-_skip_}" 2>/dev/null || true
+sudo rm -f /etc/systemd/system/0gchaind.service /etc/systemd/system/0g-geth.service /etc/systemd/system/0ggeth.service /etc/systemd/system/0g-reth.service /etc/systemd/system/reth.service
+sudo rm -f "/etc/systemd/system/${OG_SERVICE_NAME}.service" "/etc/systemd/system/${OG_GETH_SERVICE_NAME:-_skip_}.service" "/etc/systemd/system/${OG_RETH_SERVICE_NAME:-_skip_}.service" 2>/dev/null || true
+rm -f "$HOME/go/bin/0gchaind" "$HOME/go/bin/0g-geth" "$HOME/go/bin/0ggeth" "$HOME/go/bin/0g-reth" "$HOME/go/bin/reth"
+rm -rf "$HOME/.0gchaind" "$HOME/galileo"
+
+sudo apt-get update -y
+sudo apt-get install -y curl jq htop tmux lz4 ufw iproute2
+mkdir -p "$HOME/go/bin"
+cp -a "$STAGED_BUNDLE" "$HOME/galileo"
+
+install -m 0755 "$HOME/galileo/bin/0gchaind" "$HOME/go/bin/0gchaind"
+if [ "$EXEC_CLIENT" = "geth" ]; then
+    install -m 0755 "$HOME/galileo/bin/geth" "$HOME/go/bin/0g-geth"
+else
+    install -m 0755 "$HOME/galileo/bin/reth" "$HOME/go/bin/0g-reth"
 fi
 
-# ==== CLEANUP EXISTING INSTALLATION ====
-echo -e "\n?? Cleaning up any existing 0G node installation..."
+mkdir -p "$HOME/.0gchaind"
+cp -a "$HOME/galileo/$NODE_TYPE/." "$HOME/.0gchaind/"
 
-# Stop and disable services (uses both hardcoded and custom names for compatibility)
-sudo systemctl stop 0gchaind ${OG_SERVICE_NAME} 2>/dev/null || true
-sudo systemctl stop 0g-geth 0ggeth ${OG_GETH_SERVICE_NAME} 2>/dev/null || true
-sudo systemctl disable 0gchaind ${OG_SERVICE_NAME} 2>/dev/null || true
-sudo systemctl disable 0g-geth 0ggeth ${OG_GETH_SERVICE_NAME} 2>/dev/null || true
-sudo rm -f /etc/systemd/system/0gchaind.service /etc/systemd/system/0g-geth.service /etc/systemd/system/0ggeth.service
-sudo rm -f /etc/systemd/system/${OG_SERVICE_NAME}.service /etc/systemd/system/${OG_GETH_SERVICE_NAME}.service 2>/dev/null || true
-sudo rm -f $HOME/go/bin/0gchaind $HOME/go/bin/0g-geth $HOME/go/bin/0ggeth
-rm -rf $HOME/.0gchaind $HOME/galileo $HOME/galileo-v3.0.4 $HOME/galileo-v3.0.4.tar.gz
-
-echo "? Cleanup complete."
-
-# ==== DEPENDENCIES ====
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y curl git wget htop tmux build-essential jq make lz4 gcc unzip ufw
-
-# ==== INSTALL GO ====
-cd $HOME && ver="1.22.5"
-wget -q "https://golang.org/dl/go$ver.linux-amd64.tar.gz"
-sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf "go$ver.linux-amd64.tar.gz"
-rm "go$ver.linux-amd64.tar.gz"
-echo 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' >> ~/.bash_profile
-source ~/.bash_profile
-[ ! -d ~/go/bin ] && mkdir -p ~/go/bin
-go version
-
-# Optional: Configure UFW based on chosen ports
-if [[ "$SETUP_UFW" =~ ^[Yy]$ ]]; then
-    sudo apt install -y ufw
-    sudo ufw allow 22/tcp comment "SSH Access"
-    sudo ufw allow ${OG_PORT}303/tcp comment "0g-geth Testnet P2P"
-    sudo ufw allow ${OG_PORT}303/udp comment "0g-geth Testnet discovery"
-    sudo ufw allow ${OG_PORT}656/tcp comment "0g Testnet CometBFT P2P"
-    sudo ufw --force enable
-    sudo ufw status verbose
+if [ "$EXEC_CLIENT" = "geth" ]; then
+    "$HOME/go/bin/0g-geth" init --datadir "$HOME/.0gchaind/0g-home/geth-home" "$HOME/.0gchaind/geth-genesis.json"
+else
+    "$HOME/go/bin/0g-reth" init --chain "$HOME/.0gchaind/geth-genesis.json" --datadir "$HOME/.0gchaind/0g-home/reth-home"
+    mkdir -p "$HOME/.0gchaind/config"
+    ln -sf "$HOME/.0gchaind/0g-home/0gchaind-home/config/client.toml" "$HOME/.0gchaind/config/client.toml"
 fi
 
-# ==== DOWNLOAD GALILEO v3.0.4 ====
-cd $HOME
-sudo rm -rf galileo
-tar -xzvf "$STAGED_ARCHIVE"
-mv galileo-v3.0.4 galileo
-
-# ==== MAKE BINARIES EXECUTABLE ====
-sudo chmod +x $HOME/galileo/$NODE_TYPE/bin/geth
-sudo chmod +x $HOME/galileo/$NODE_TYPE/bin/0gchaind
-
-# ==== MOVE BINARIES ====
-cp $HOME/galileo/$NODE_TYPE/bin/geth $HOME/go/bin/0g-geth
-cp $HOME/galileo/$NODE_TYPE/bin/0gchaind $HOME/go/bin/0gchaind
-
-# ==== INIT CHAIN ====
-mkdir -p $HOME/.0gchaind/
-cp -r $HOME/galileo/$NODE_TYPE/* $HOME/.0gchaind/
-0g-geth init --datadir $HOME/.0gchaind/0g-home/geth-home $HOME/.0gchaind/geth-genesis.json
-0gchaind init "$MONIKER" --home $HOME/.0gchaind/tmp --chaincfg.chain-spec testnet
-
-# ==== COPY KEYS ====
-cp $HOME/.0gchaind/tmp/data/priv_validator_state.json $HOME/.0gchaind/0g-home/0gchaind-home/data/
-cp $HOME/.0gchaind/tmp/config/node_key.json $HOME/.0gchaind/0g-home/0gchaind-home/config/
-cp $HOME/.0gchaind/tmp/config/priv_validator_key.json $HOME/.0gchaind/0g-home/0gchaind-home/config/
+"$HOME/go/bin/0gchaind" init "$MONIKER" --chain-id "$CONSENSUS_NETWORK" --home "$HOME/.0gchaind/tmp" --chaincfg.chain-spec testnet
+cp "$HOME/.0gchaind/tmp/data/priv_validator_state.json" "$HOME/.0gchaind/0g-home/0gchaind-home/data/"
+cp "$HOME/.0gchaind/tmp/config/node_key.json" "$HOME/.0gchaind/0g-home/0gchaind-home/config/"
+cp "$HOME/.0gchaind/tmp/config/priv_validator_key.json" "$HOME/.0gchaind/0g-home/0gchaind-home/config/"
 
 if [ "$PRESERVE_VALIDATOR_IDENTITY" = "yes" ]; then
-  cp "$REDEPLOY_BACKUP_DIR/priv_validator_key.json" "$HOME/.0gchaind/0g-home/0gchaind-home/config/priv_validator_key.json"
-  [ -f "$REDEPLOY_BACKUP_DIR/node_key.json" ] && cp "$REDEPLOY_BACKUP_DIR/node_key.json" "$HOME/.0gchaind/0g-home/0gchaind-home/config/node_key.json"
-  [ -f "$REDEPLOY_BACKUP_DIR/priv_validator_state.json" ] && cp "$REDEPLOY_BACKUP_DIR/priv_validator_state.json" "$HOME/.0gchaind/0g-home/0gchaind-home/data/priv_validator_state.json"
-  chmod 600 "$HOME/.0gchaind/0g-home/0gchaind-home/config/priv_validator_key.json"
-  echo -e "${GREEN}Existing consensus validator identity/state restored after fresh init.${RESET}"
+    cp "$REDEPLOY_BACKUP_DIR/priv_validator_key.json" "$HOME/.0gchaind/0g-home/0gchaind-home/config/priv_validator_key.json"
+    [ -f "$REDEPLOY_BACKUP_DIR/node_key.json" ] && cp "$REDEPLOY_BACKUP_DIR/node_key.json" "$HOME/.0gchaind/0g-home/0gchaind-home/config/node_key.json"
+    [ -f "$REDEPLOY_BACKUP_DIR/priv_validator_state.json" ] && cp "$REDEPLOY_BACKUP_DIR/priv_validator_state.json" "$HOME/.0gchaind/0g-home/0gchaind-home/data/priv_validator_state.json"
+    chmod 600 "$HOME/.0gchaind/0g-home/0gchaind-home/config/priv_validator_key.json"
 fi
 
-# ==== Generate JWT Authentication Token ====
-0gchaind jwt generate --home $HOME/.0gchaind/0g-home/0gchaind-home --chaincfg.chain-spec testnet
-cp -f $HOME/.0gchaind/0g-home/0gchaind-home/config/jwt.hex $HOME/.0gchaind/jwt.hex
+"$HOME/go/bin/0gchaind" jwt generate --home "$HOME/.0gchaind/0g-home/0gchaind-home" --chaincfg.chain-spec testnet
+cp -f "$HOME/.0gchaind/0g-home/0gchaind-home/config/jwt.hex" "$HOME/.0gchaind/jwt.hex"
+chmod 600 "$HOME/.0gchaind/jwt.hex"
 
-# ==== CONFIG PATCH ====
 CONFIG="$HOME/.0gchaind/0g-home/0gchaind-home/config"
 GCONFIG="$HOME/.0gchaind/geth-config.toml"
-EXTERNAL_IP=$(curl -4 -s ifconfig.me)
 
-# config.toml
-sed -i "s/^moniker *=.*/moniker = \"$MONIKER\"/" $CONFIG/config.toml
-sed -i "s|laddr = \"tcp://0.0.0.0:26656\"|laddr = \"tcp://0.0.0.0:${OG_PORT}656\"|" $CONFIG/config.toml
-sed -i "s|laddr = \"tcp://127.0.0.1:26657\"|laddr = \"tcp://127.0.0.1:${OG_PORT}657\"|" $CONFIG/config.toml
-sed -i "s|^proxy_app = .*|proxy_app = \"tcp://127.0.0.1:${OG_PORT}658\"|" $CONFIG/config.toml
-sed -i "s|^pprof_laddr = .*|pprof_laddr = \"127.0.0.1:${OG_PORT}060\"|" $CONFIG/config.toml
-sed -i "s|prometheus_listen_addr = \".*\"|prometheus_listen_addr = \"127.0.0.1:${OG_PORT}660\"|" $CONFIG/config.toml
+sed -i "s/^moniker *=.*/moniker = \"$MONIKER\"/" "$CONFIG/config.toml"
+sed -i "s|laddr = \"tcp://0.0.0.0:26656\"|laddr = \"tcp://0.0.0.0:${OG_PORT}656\"|" "$CONFIG/config.toml"
+sed -i "s|laddr = \"tcp://127.0.0.1:26657\"|laddr = \"tcp://127.0.0.1:${OG_PORT}657\"|" "$CONFIG/config.toml"
+sed -i "s|^proxy_app = .*|proxy_app = \"tcp://127.0.0.1:${OG_PORT}658\"|" "$CONFIG/config.toml"
+sed -i "s|^pprof_laddr = .*|pprof_laddr = \"127.0.0.1:${OG_PORT}060\"|" "$CONFIG/config.toml"
+sed -i "s|prometheus_listen_addr = \".*\"|prometheus_listen_addr = \"127.0.0.1:${OG_PORT}660\"|" "$CONFIG/config.toml"
 
-# indexer toggle
 if [ "$ENABLE_INDEXER" = "yes" ]; then
-  sed -i -e 's/^indexer = "null"/indexer = "kv"/' $CONFIG/config.toml
-  echo "Indexer enabled."
+    sed -i -e 's/^indexer = "null"/indexer = "kv"/' "$CONFIG/config.toml"
 else
-  sed -i -e 's/^indexer = "kv"/indexer = "null"/' $CONFIG/config.toml
-  echo "Indexer disabled."
+    sed -i -e 's/^indexer = "kv"/indexer = "null"/' "$CONFIG/config.toml"
 fi
 
-# app.toml
-sed -i "s|address = \".*:3500\"|address = \"127.0.0.1:${OG_PORT}500\"|" $CONFIG/app.toml
-sed -i "s|^rpc-dial-url *=.*|rpc-dial-url = \"http://localhost:${OG_PORT}551\"|" $CONFIG/app.toml
-sed -i "s/^pruning *=.*/pruning = \"custom\"/" $CONFIG/app.toml
-sed -i "s/^pruning-keep-recent *=.*/pruning-keep-recent = \"100\"/" $CONFIG/app.toml
-sed -i "s/^pruning-interval *=.*/pruning-interval = \"19\"/" $CONFIG/app.toml
+sed -i "s|address = \".*:3500\"|address = \"127.0.0.1:${OG_PORT}500\"|" "$CONFIG/app.toml"
+sed -i "s|^rpc-dial-url *=.*|rpc-dial-url = \"http://localhost:${OG_PORT}551\"|" "$CONFIG/app.toml"
+sed -i 's/^pruning *=.*/pruning = "custom"/' "$CONFIG/app.toml"
+sed -i 's/^pruning-keep-recent *=.*/pruning-keep-recent = "100"/' "$CONFIG/app.toml"
+sed -i 's/^pruning-interval *=.*/pruning-interval = "19"/' "$CONFIG/app.toml"
 
-# geth-config.toml
-sed -i "s/HTTPPort = .*/HTTPPort = ${OG_PORT}545/" $GCONFIG
-sed -i "s/WSPort = .*/WSPort = ${OG_PORT}546/" $GCONFIG
-sed -i "s/AuthPort = .*/AuthPort = ${OG_PORT}551/" $GCONFIG
-sed -i "s/ListenAddr = .*/ListenAddr = \":${OG_PORT}303\"/" $GCONFIG
-sed -i "s/DiscAddr = .*/DiscAddr = \":${OG_PORT}303\"/" $GCONFIG
-sed -i "s/^# *Port = .*/# Port = ${OG_PORT}901/" $GCONFIG
-sed -i "s/^# *InfluxDBEndpoint = .*/# InfluxDBEndpoint = \"http:\/\/localhost:${OG_PORT}086\"/" $GCONFIG
-
-# v3.0.4 testnet release requirement: staking activation override under [Eth].
-if grep -Eq '^[[:space:]]*OverrideStakingActivation[[:space:]]*=' "$GCONFIG"; then
-  sed -i -E 's/^[[:space:]]*OverrideStakingActivation[[:space:]]*=.*/OverrideStakingActivation = 1767830400/' "$GCONFIG"
-else
-  GCONFIG_TMP=$(mktemp)
-  if ! awk '
-    BEGIN { inserted=0 }
-    /^\[[Ee][Tt][Hh]\][[:space:]]*$/ && inserted==0 {
-      print
-      print "OverrideStakingActivation = 1767830400"
-      inserted=1
-      next
+if [ "$EXEC_CLIENT" = "geth" ]; then
+    grep -Eq '^OverrideStakingActivation[[:space:]]*=[[:space:]]*1767830400$' "$GCONFIG" || {
+        echo "Verified v3.0.8 package is missing the expected staking activation setting." >&2
+        exit 1
     }
-    { print }
-    END { if (inserted==0) exit 42 }
-  ' "$GCONFIG" > "$GCONFIG_TMP"; then
-    rm -f "$GCONFIG_TMP"
-    echo -e "${RED}Could not locate the [Eth] section required for OverrideStakingActivation.${RESET}" >&2
-    exit 1
-  fi
-  mv "$GCONFIG_TMP" "$GCONFIG"
+    sed -i "s/^HTTPHost = .*/HTTPHost = \"127.0.0.1\"/" "$GCONFIG"
+    sed -i "s/^HTTPPort = .*/HTTPPort = ${OG_PORT}545/" "$GCONFIG"
+    sed -i "s/^WSHost = .*/WSHost = \"127.0.0.1\"/" "$GCONFIG"
+    sed -i "s/^WSPort = .*/WSPort = ${OG_PORT}546/" "$GCONFIG"
+    sed -i "s/^ListenAddr = .*/ListenAddr = \":${OG_PORT}303\"/" "$GCONFIG"
+    sed -i "s/^DiscAddr = .*/DiscAddr = \":${OG_PORT}303\"/" "$GCONFIG"
+    sed -i 's/^HTTP = .*/HTTP = "127.0.0.1"/' "$GCONFIG"
+    sed -i "s/^Port = .*/Port = ${OG_PORT}901/" "$GCONFIG"
 fi
 
-# ==== SYSTEMD SERVICES ====
-# Consensus service file (branch on NODE_TYPE)
+if [[ "$SETUP_UFW" =~ ^[Yy]$ ]]; then
+    sudo ufw allow 22/tcp comment "SSH Access"
+    sudo ufw allow "${OG_PORT}303/tcp" comment "0G Testnet EL P2P"
+    sudo ufw allow "${OG_PORT}303/udp" comment "0G Testnet EL discovery"
+    sudo ufw allow "${OG_PORT}656/tcp" comment "0G Testnet CometBFT P2P"
+    sudo ufw --force enable
+fi
+
+VALIDATOR_ENV_FILE="$HOME/.0gchaind/validator.env"
 if [ "$NODE_TYPE" = "validator" ]; then
-sudo tee /etc/systemd/system/${OG_SERVICE_NAME}.service > /dev/null <<EOF
-[Unit]
-Description=0gchaind Node Service - ${OG_SERVICE_NAME} (Validator)
-After=network-online.target
-
-[Service]
-User=$USER
-Environment=CHAIN_SPEC=testnet
-WorkingDirectory=$HOME/.0gchaind
-ExecStart=$HOME/go/bin/0gchaind start \\
-  --chaincfg.chain-spec testnet \\
-  --chaincfg.restaking.enabled \\
-  --chaincfg.restaking.symbiotic-rpc-dial-url ${ETH_RPC_URL} \\
-  --chaincfg.restaking.symbiotic-get-logs-block-range ${BLOCK_NUM} \\
-  --home $HOME/.0gchaind/0g-home/0gchaind-home \\
-  --chaincfg.kzg.trusted-setup-path=$HOME/.0gchaind/kzg-trusted-setup.json \\
-  --chaincfg.engine.jwt-secret-path=$HOME/.0gchaind/jwt.hex \\
-  --chaincfg.kzg.implementation=crate-crypto/go-kzg-4844 \\
-  --chaincfg.engine.rpc-dial-url=http://localhost:${OG_PORT}551 \\
-  --p2p.external_address=${EXTERNAL_IP}:${OG_PORT}656
-Restart=always
-RestartSec=3
-LimitNOFILE=65535
-
-[Install]
-WantedBy=multi-user.target
-EOF
-else
-sudo tee /etc/systemd/system/${OG_SERVICE_NAME}.service > /dev/null <<EOF
-[Unit]
-Description=0gchaind Node Service - ${OG_SERVICE_NAME} (RPC)
-After=network-online.target
-
-[Service]
-User=$USER
-Environment=CHAIN_SPEC=testnet
-WorkingDirectory=$HOME/.0gchaind
-ExecStart=$HOME/go/bin/0gchaind start \\
-  --chaincfg.chain-spec testnet \\
-  --home $HOME/.0gchaind/0g-home/0gchaind-home \\
-  --chaincfg.kzg.trusted-setup-path=$HOME/.0gchaind/kzg-trusted-setup.json \\
-  --chaincfg.engine.jwt-secret-path=$HOME/.0gchaind/jwt.hex \\
-  --chaincfg.kzg.implementation=crate-crypto/go-kzg-4844 \\
-  --chaincfg.engine.rpc-dial-url=http://localhost:${OG_PORT}551 \\
-  --p2p.external_address=${EXTERNAL_IP}:${OG_PORT}656
-Restart=always
-RestartSec=3
-LimitNOFILE=65535
-
-[Install]
-WantedBy=multi-user.target
-EOF
+    umask 077
+    printf 'ETH_RPC_URL=%s\nBLOCK_NUM=%s\n' "$ETH_RPC_URL" "$BLOCK_NUM" > "$VALIDATOR_ENV_FILE"
 fi
 
-# Geth service file
-sudo tee /etc/systemd/system/${OG_GETH_SERVICE_NAME}.service > /dev/null <<EOF
+if [ "$NODE_TYPE" = "validator" ]; then
+sudo tee "/etc/systemd/system/${OG_SERVICE_NAME}.service" >/dev/null <<EOF_UNIT
 [Unit]
-Description=0g Geth Node Service - ${OG_GETH_SERVICE_NAME}
+Description=0gchaind Galileo Validator - ${OG_SERVICE_NAME}
 After=network-online.target
+Wants=network-online.target
 
 [Service]
 User=$USER
+Environment=CHAIN_SPEC=testnet
+EnvironmentFile=$VALIDATOR_ENV_FILE
 WorkingDirectory=$HOME/.0gchaind
-ExecStart=$HOME/go/bin/0g-geth \\
-  --config $HOME/.0gchaind/geth-config.toml \\
-  --datadir $HOME/.0gchaind/0g-home/geth-home \\
-  --http.port ${OG_PORT}545 \\
-  --ws.port ${OG_PORT}546 \\
-  --authrpc.port ${OG_PORT}551 \\
-  --port ${OG_PORT}303 \\
-  --discovery.port ${OG_PORT}303 \\
-  --networkid 16602
-Restart=always
+ExecStart=$HOME/go/bin/0gchaind start \
+  --chaincfg.chain-spec testnet \
+  --chaincfg.restaking.enabled \
+  --chaincfg.restaking.symbiotic-rpc-dial-url \${ETH_RPC_URL} \
+  --chaincfg.restaking.symbiotic-get-logs-block-range \${BLOCK_NUM} \
+  --home $HOME/.0gchaind/0g-home/0gchaind-home \
+  --chaincfg.kzg.trusted-setup-path=$HOME/.0gchaind/kzg-trusted-setup.json \
+  --chaincfg.engine.jwt-secret-path=$HOME/.0gchaind/jwt.hex \
+  --chaincfg.kzg.implementation=crate-crypto/go-kzg-4844 \
+  --chaincfg.engine.rpc-dial-url=http://127.0.0.1:${OG_PORT}551 \
+  --p2p.external_address=${EXTERNAL_IP}:${OG_PORT}656
+Restart=on-failure
 RestartSec=3
 LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
-EOF
+EOF_UNIT
+else
+sudo tee "/etc/systemd/system/${OG_SERVICE_NAME}.service" >/dev/null <<EOF_UNIT
+[Unit]
+Description=0gchaind Galileo RPC - ${OG_SERVICE_NAME}
+After=network-online.target
+Wants=network-online.target
 
-# ==== START SERVICES ====
+[Service]
+User=$USER
+Environment=CHAIN_SPEC=testnet
+WorkingDirectory=$HOME/.0gchaind
+ExecStart=$HOME/go/bin/0gchaind start \
+  --chaincfg.chain-spec testnet \
+  --home $HOME/.0gchaind/0g-home/0gchaind-home \
+  --chaincfg.kzg.trusted-setup-path=$HOME/.0gchaind/kzg-trusted-setup.json \
+  --chaincfg.engine.jwt-secret-path=$HOME/.0gchaind/jwt.hex \
+  --chaincfg.kzg.implementation=crate-crypto/go-kzg-4844 \
+  --chaincfg.engine.rpc-dial-url=http://127.0.0.1:${OG_PORT}551 \
+  --p2p.external_address=${EXTERNAL_IP}:${OG_PORT}656
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF_UNIT
+fi
+
+if [ "$EXEC_CLIENT" = "geth" ]; then
+sudo tee "/etc/systemd/system/${EL_SERVICE_NAME}.service" >/dev/null <<EOF_UNIT
+[Unit]
+Description=0G Galileo Geth - ${EL_SERVICE_NAME}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=$USER
+WorkingDirectory=$HOME/.0gchaind
+ExecStart=$HOME/go/bin/0g-geth \
+  --config $HOME/.0gchaind/geth-config.toml \
+  --datadir $HOME/.0gchaind/0g-home/geth-home \
+  --http \
+  --http.addr 127.0.0.1 \
+  --http.port ${OG_PORT}545 \
+  --ws \
+  --ws.addr 127.0.0.1 \
+  --ws.port ${OG_PORT}546 \
+  --authrpc.addr 127.0.0.1 \
+  --authrpc.port ${OG_PORT}551 \
+  --discovery.port ${OG_PORT}303 \
+  --port ${OG_PORT}303 \
+  --networkid ${EXPECTED_CHAIN_ID}
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF_UNIT
+else
+sudo tee "/etc/systemd/system/${EL_SERVICE_NAME}.service" >/dev/null <<EOF_UNIT
+[Unit]
+Description=0G Galileo Reth - ${EL_SERVICE_NAME}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=$USER
+Type=simple
+WorkingDirectory=$HOME/.0gchaind
+ExecStart=$HOME/go/bin/0g-reth node \
+  --chain $HOME/.0gchaind/geth-genesis.json \
+  --http \
+  --http.addr 127.0.0.1 \
+  --http.port ${OG_PORT}545 \
+  --http.api eth,net,web3,txpool \
+  --authrpc.addr 127.0.0.1 \
+  --authrpc.port ${OG_PORT}551 \
+  --authrpc.jwtsecret $HOME/.0gchaind/jwt.hex \
+  --datadir $HOME/.0gchaind/0g-home/reth-home \
+  --ipcpath $HOME/.0gchaind/0g-home/reth-home/eth-engine.ipc \
+  --engine.persistence-threshold 0 \
+  --engine.memory-block-buffer-target 0 \
+  --bootnodes=enode://4f70c6c95329427be4af2a233c9c2305896d37c21bca8c21e7efc36634a862bd5b96b0c4a8a9bb5787b53eb01472fe895aad170d0923f6ea56ebc5f94825c4f7@34.105.23.36:30303 \
+  --port ${OG_PORT}303 \
+  --nat extip:${EXTERNAL_IP}
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF_UNIT
+fi
+
+persist_export MONIKER "$MONIKER"
+persist_export OG_PORT "$OG_PORT"
+persist_export NODE_TYPE "$NODE_TYPE"
+persist_export EXEC_CLIENT "$EXEC_CLIENT"
+persist_export OG_SERVICE_NAME "$OG_SERVICE_NAME"
+if [ "$EXEC_CLIENT" = "geth" ]; then
+    persist_export OG_GETH_SERVICE_NAME "$OG_GETH_SERVICE_NAME"
+else
+    persist_export OG_RETH_SERVICE_NAME "$OG_RETH_SERVICE_NAME"
+fi
+
 sudo systemctl daemon-reload
-sudo systemctl enable ${OG_SERVICE_NAME}
-sudo systemctl enable ${OG_GETH_SERVICE_NAME}
-sudo systemctl start ${OG_SERVICE_NAME}
-sudo systemctl start ${OG_GETH_SERVICE_NAME}
+sudo systemctl enable "$EL_SERVICE_NAME" "$OG_SERVICE_NAME"
+sudo systemctl start "$EL_SERVICE_NAME"
+if [ "$EXEC_CLIENT" = "reth" ]; then
+    echo "Waiting for the Reth Engine API before starting consensus..."
+    ready=no
+    for _ in $(seq 1 30); do
+        if ss -lnt 2>/dev/null | grep -q ":${OG_PORT}551[[:space:]]"; then ready=yes; break; fi
+        sleep 1
+    done
+    [ "$ready" = "yes" ] || { echo "Reth Engine API did not become ready; consensus was not started." >&2; exit 1; }
+fi
+sudo systemctl start "$OG_SERVICE_NAME"
+sleep 2
+systemctl is-active --quiet "$EL_SERVICE_NAME" || { echo "$EL_SERVICE_NAME failed to become active." >&2; exit 1; }
+systemctl is-active --quiet "$OG_SERVICE_NAME" || { echo "$OG_SERVICE_NAME failed to become active." >&2; exit 1; }
 
-# ==== DONE ====
-echo -e "\n${GREEN}? 0G Node Installation Completed Successfully!${RESET}"
-echo -e "\n${YELLOW}Node Configuration Summary:${RESET}"
-echo -e "Type: ${CYAN}$NODE_TYPE${RESET}"
-echo -e "Moniker: ${CYAN}$MONIKER${RESET}"
-echo -e "Port Prefix: ${CYAN}$OG_PORT${RESET}"
-echo -e "Consensus Service: ${CYAN}${OG_SERVICE_NAME}.service${RESET}"
-echo -e "Geth Service: ${CYAN}${OG_GETH_SERVICE_NAME}.service${RESET}"
-echo -e "Indexer: ${CYAN}$([ "$ENABLE_INDEXER" = "yes" ] && echo "Enabled" || echo "Disabled")${RESET}"
-[ "$NODE_TYPE" = "validator" ] && echo -e "ETH_RPC_URL: ${CYAN}$ETH_RPC_URL${RESET}\nBLOCK_NUM: ${CYAN}$BLOCK_NUM${RESET}"
-echo -e "Node ID: ${CYAN}$(0gchaind comet show-node-id --home $HOME/.0gchaind/0g-home/0gchaind-home/)${RESET}"
-echo -e "\nTo view logs: sudo journalctl -u ${OG_SERVICE_NAME} -u ${OG_GETH_SERVICE_NAME} -fn 100"
-echo -e "\n${YELLOW}Press Enter to continue to main menu...${RESET}"
-read -r
+local_chain=""
+for _ in $(seq 1 20); do
+    local_chain=$(rpc_chain_id "http://127.0.0.1:${OG_PORT}545")
+    [ "$local_chain" = "$EXPECTED_CHAIN_ID" ] && break
+    sleep 1
+done
+[ "$local_chain" = "$EXPECTED_CHAIN_ID" ] || {
+    echo "Post-install chain verification failed: local EL reports ${local_chain:-unavailable}; expected $EXPECTED_CHAIN_ID." >&2
+    exit 1
+}
+
+echo -e "\n${GREEN}0G Galileo $GALILEO_VERSION installation completed.${RESET}"
+echo "Consensus network: $CONSENSUS_NETWORK"
+echo "EVM chain ID: $EXPECTED_CHAIN_ID"
+echo "Execution client: $EXEC_CLIENT"
+echo "Consensus service: ${OG_SERVICE_NAME}.service"
+echo "Execution service: ${EL_SERVICE_NAME}.service"
+echo "This code path is statically rebaselined to v3.0.8; clean-host/live validator rehearsal is still required before public release."

@@ -26,7 +26,7 @@ Documentation for the Valley of 0G Testnet toolkit (Galileo chain).
 
 | Component | Version |
 |-----------|---------|
-| Validator Node | v3.0.4 (managed) |
+| Validator Node | v3.0.8 (statically rebaselined; live rehearsal pending) |
 | Storage Node | v1.1.0 |
 | Storage KV | v1.4.0 |
 | EVM Chain ID | 16602 (Galileo) |

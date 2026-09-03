@@ -77,20 +77,25 @@ bash <(curl -fsSL https://raw.githubusercontent.com/hubofvalley/Valley-of-0G-Tes
 
 | Component | Version |
 |-----------|---------|
-| Validator Node | v3.0.4 (managed; newer upstream releases require review) |
+| Validator Node | v3.0.8 (statically rebaselined; live rehearsal pending) |
 | Storage Node | v1.1.0 |
 | Storage KV | v1.4.0 |
 | EVM Chain ID | 16602 (Galileo) |
 
-## Baconvalley Public Endpoints
+The canonical Galileo consensus network is `0G-testnet-galileo`. Fresh validator/RPC deployments may choose **Reth** (recommended by upstream for new deployments) or **Geth**. Existing Geth nodes are upgraded in place as Geth; Valley intentionally does not combine a database migration to Reth with a bundle upgrade.
+
+`v3.0.8` is pinned to release commit `b80e68528d544f6c719c83d9741ca584a76973e2` and archive SHA-256 `b9c008865513c06e2cf75d7e2daee27f739356a45e505e492dcffe70b90457a7`. The code path is ready for clean-host/live rehearsal, but that rehearsal is still a release gate.
+
+## Testnet Endpoint Status
 
 | Type | URL |
 |------|-----|
-| Cosmos RPC | `https://lightnode-rpc-0g.grandvalleys.com` |
-| EVM RPC | `https://lightnode-json-rpc-0g.grandvalleys.com` |
-| Cosmos REST API | `https://lightnode-api-0g.grandvalleys.com` |
-| Peer | `a97c8615903e795135066842e5739e30d64e2342@peer-0g.grandvalleys.com:28656` |
-| Explorer | `https://explorer.grandvalleys.com` |
+| Official Galileo EVM RPC | `https://evmrpc-testnet.0g.ai` — managed chain-identity reference (`16602`) |
+| Grand Valley legacy Cosmos RPC | `https://lightnode-rpc-0g.grandvalleys.com` — **needs live repair/reverification** |
+| Grand Valley legacy EVM RPC | `https://lightnode-json-rpc-0g.grandvalleys.com` — **needs live repair/reverification** |
+| Grand Valley legacy Cosmos REST API | `https://lightnode-api-0g.grandvalleys.com` — **needs live repair/reverification** |
+
+The legacy Grand Valley Testnet endpoint hostnames remain documented for repair provenance, but Valley scripts must not depend on them as a trusted network-identity source until they pass live verification again.
 
 ## Privacy & Security
 
