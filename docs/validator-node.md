@@ -33,6 +33,9 @@ Deploy and manage a 0G validator node on Galileo testnet.
 The canonical network identity is consensus `0G-testnet-galileo` plus EVM chain ID `16602`. The installer verifies both identities inside the pinned release archive before destructive redeploy begins.
 
 For an existing Geth node, the managed updater keeps Geth. It does not combine a Galileo binary upgrade with a Geth-to-Reth database migration. A clean Reth deployment initializes its own Reth database from the pinned Galileo genesis.
+
+When redeploying an existing validator identity, the installer preserves the consensus validator key together with `priv_validator_state.json`. If a validator key exists but its last-sign state is missing, redeploy fails closed before backup, service shutdown, or data cleanup. Recover and verify the signing state before retrying; the installer will not pair an existing signing key with a fresh last-sign state.
+
 | **Data directory** | `$HOME/.0gchaind` |
 
 ## Updating
