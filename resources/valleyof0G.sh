@@ -613,19 +613,19 @@ function delete_validator_node() {
 
 function show_validator_logs() {
     echo "Displaying Consensus Client and Execution Client (${EXEC_CLIENT}) Logs:"
-    sudo journalctl -u "$OG_SERVICE_NAME" -u "$EL_SERVICE_NAME" -fn 100 --no-pager
+    sudo journalctl --unit="$OG_SERVICE_NAME" --unit="$EL_SERVICE_NAME" --lines=100 --follow --no-pager || true
     menu
 }
 
 function show_consensus_client_logs() {
     echo "Displaying Consensus Client Logs:"
-    sudo journalctl -u ${OG_SERVICE_NAME} -fn 100
+    sudo journalctl --unit="$OG_SERVICE_NAME" --lines=100 --follow --no-pager || true
     menu
 }
 
 function show_geth_logs() {
     echo "Displaying Execution Client (${EXEC_CLIENT}) Logs:"
-    sudo journalctl -u "$EL_SERVICE_NAME" -fn 100
+    sudo journalctl --unit="$EL_SERVICE_NAME" --lines=100 --follow --no-pager || true
     menu
 }
 
@@ -940,7 +940,7 @@ function deploy_storage_kv() {
 }
 
 function show_storage_kv_logs() {
-    sudo journalctl -u zgskv -fn 100
+    sudo journalctl --unit=zgskv --lines=100 --follow --no-pager || true
     menu
 }
 

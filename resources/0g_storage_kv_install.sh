@@ -182,7 +182,7 @@ sudo systemctl enable zgskv && \
 sudo systemctl restart zgskv
 
 # 10. Check the logs
-echo "To check the logs, use the command: sudo journalctl -u zgskv -fn 100 -o cat"
+echo "To check the logs, use the command: sudo journalctl --unit=zgskv --lines=100 --follow --output=cat"
 
 # 11. Confirmation message for installation completion
 if systemctl is-active --quiet zgskv; then
