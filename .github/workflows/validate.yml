@@ -24,7 +24,11 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 2
+          # test_runtime_script_pin.sh validates the exact immutable commit
+          # referenced by VALLEY_RUNTIME_REF, which can be older than the PR
+          # base. Keep full history available so the security check remains
+          # valid as additional commits land on main.
+          fetch-depth: 0
 
       - name: Check Bash syntax
         shell: bash
