@@ -35,13 +35,19 @@ grep -Fq 'REDEPLOY-GALILEO' "$INSTALLER" || fail "typed redeploy confirmation mi
 grep -Fq 'priv_validator_key.json' "$INSTALLER" || fail "consensus validator key preservation path missing"
 grep -Fq 'priv_validator_state.json' "$INSTALLER" || fail "double-sign state preservation path missing"
 grep -Fq 'PRESERVE_VALIDATOR_IDENTITY=yes' "$INSTALLER" || fail "redeploy does not restore existing consensus identity"
+grep -Fq 'Redeploy blocked: validator key exists but priv_validator_state.json is missing.' "$INSTALLER" || fail "redeploy must refuse a validator key without last-sign state"
+grep -Fq 'cp "$OLD_CONS_HOME/data/priv_validator_state.json" "$REDEPLOY_BACKUP_DIR/priv_validator_state.json"' "$INSTALLER" || fail "validator-state backup must be mandatory when preserving a signing key"
+grep -Fq 'cp "$REDEPLOY_BACKUP_DIR/priv_validator_state.json" "$HOME/.0gchaind/0g-home/0gchaind-home/data/priv_validator_state.json"' "$INSTALLER" || fail "preserved last-sign state must be restored with the validator key"
 grep -Fq '127.0.0.1:${OG_PORT}060' "$INSTALLER" || fail "pprof should be loopback-bound"
 grep -Fq '127.0.0.1:${OG_PORT}660' "$INSTALLER" || fail "prometheus should be loopback-bound"
 
 download_line=$(grep -n 'curl -fL --retry 3 "$GALILEO_URL"' "$INSTALLER" | head -n1 | cut -d: -f1)
 checksum_line=$(grep -n 'sha256sum --check' "$INSTALLER" | head -n1 | cut -d: -f1)
+state_guard_line=$(grep -n 'Redeploy blocked: validator key exists but priv_validator_state.json is missing.' "$INSTALLER" | head -n1 | cut -d: -f1)
+key_backup_line=$(grep -n 'cp "$OLD_CONS_HOME/config/priv_validator_key.json"' "$INSTALLER" | head -n1 | cut -d: -f1)
 cleanup_line=$(grep -n 'sudo systemctl stop 0gchaind' "$INSTALLER" | head -n1 | cut -d: -f1)
 [ "$download_line" -lt "$cleanup_line" ] && [ "$checksum_line" -lt "$cleanup_line" ] || fail "release must be downloaded and verified before destructive cleanup"
+[ "$state_guard_line" -lt "$key_backup_line" ] && [ "$state_guard_line" -lt "$cleanup_line" ] || fail "validator state-pair guard must run before key backup or destructive cleanup"
 
 if grep -Eq 'go[0-9.]+\.linux-amd64|golang\.org/dl' "$INSTALLER"; then
     fail "validator runtime should not install an unused mutable Go toolchain"

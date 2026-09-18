@@ -169,12 +169,17 @@ done
 REDEPLOY_BACKUP_DIR="$HOME/valley-0g-testnet-redeploy-backups/$(date -u +%Y%m%dT%H%M%SZ)"
 OLD_CONS_HOME="$HOME/.0gchaind/0g-home/0gchaind-home"
 PRESERVE_VALIDATOR_IDENTITY=no
+if [ -f "$OLD_CONS_HOME/config/priv_validator_key.json" ] && [ ! -f "$OLD_CONS_HOME/data/priv_validator_state.json" ]; then
+    echo "Redeploy blocked: validator key exists but priv_validator_state.json is missing." >&2
+    echo "Refusing to preserve a signing key without its last-sign state. Recover or verify the signing state before redeploying." >&2
+    exit 1
+fi
 if [ -f "$OLD_CONS_HOME/config/priv_validator_key.json" ]; then
     mkdir -p "$REDEPLOY_BACKUP_DIR"
     chmod 700 "$REDEPLOY_BACKUP_DIR"
     cp "$OLD_CONS_HOME/config/priv_validator_key.json" "$REDEPLOY_BACKUP_DIR/priv_validator_key.json"
     [ -f "$OLD_CONS_HOME/config/node_key.json" ] && cp "$OLD_CONS_HOME/config/node_key.json" "$REDEPLOY_BACKUP_DIR/node_key.json"
-    [ -f "$OLD_CONS_HOME/data/priv_validator_state.json" ] && cp "$OLD_CONS_HOME/data/priv_validator_state.json" "$REDEPLOY_BACKUP_DIR/priv_validator_state.json"
+    cp "$OLD_CONS_HOME/data/priv_validator_state.json" "$REDEPLOY_BACKUP_DIR/priv_validator_state.json"
     chmod 600 "$REDEPLOY_BACKUP_DIR"/*.json
     PRESERVE_VALIDATOR_IDENTITY=yes
     echo -e "${YELLOW}Existing consensus validator identity/state will be preserved at:${RESET} $REDEPLOY_BACKUP_DIR"
@@ -225,7 +230,7 @@ cp "$HOME/.0gchaind/tmp/config/priv_validator_key.json" "$HOME/.0gchaind/0g-home
 if [ "$PRESERVE_VALIDATOR_IDENTITY" = "yes" ]; then
     cp "$REDEPLOY_BACKUP_DIR/priv_validator_key.json" "$HOME/.0gchaind/0g-home/0gchaind-home/config/priv_validator_key.json"
     [ -f "$REDEPLOY_BACKUP_DIR/node_key.json" ] && cp "$REDEPLOY_BACKUP_DIR/node_key.json" "$HOME/.0gchaind/0g-home/0gchaind-home/config/node_key.json"
-    [ -f "$REDEPLOY_BACKUP_DIR/priv_validator_state.json" ] && cp "$REDEPLOY_BACKUP_DIR/priv_validator_state.json" "$HOME/.0gchaind/0g-home/0gchaind-home/data/priv_validator_state.json"
+    cp "$REDEPLOY_BACKUP_DIR/priv_validator_state.json" "$HOME/.0gchaind/0g-home/0gchaind-home/data/priv_validator_state.json"
     chmod 600 "$HOME/.0gchaind/0g-home/0gchaind-home/config/priv_validator_key.json"
 fi
 
